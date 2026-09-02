@@ -110,7 +110,7 @@ es de 2023. Si tiene `prompt | model`, es actual.
 | `src/models.py` | `ContractChangeOutput` con los tres campos |
 | `data/test_contracts/` | Mínimo 2 pares (4 imágenes) + README explicativo |
 | `README.md` | Diagramas, arquitectura, setup, uso, decisiones técnicas |
-| `requirements.txt` + `.env.example` | Versiones fijadas + template de env vars |
+| `pyproject.toml` + `uv.lock` + `.env.example` | Versiones fijadas + template de env vars |
 
 ### Los 5 pasos de la consigna
 
@@ -268,12 +268,32 @@ de antemano qué cambió, no tengo forma de saber si el parser funciona o alucin
 
 ## 7. Estado actual: Etapa 1
 
-`src/models.py` escrito, con **dos** clases a propósito: `ContractChangeOutput`
-(sin `Field`) y `ContractChangeOutput_field` (con `Field`). Existen solo para el
-ejercicio de comparar los dos `model_json_schema()`. Una vez hecho el ejercicio,
-queda **una sola** clase, la de los `Field`, llamada `ContractChangeOutput`.
+**Etapa 1 CERRADA.** Ejercicio de comparación de schemas hecho: la
+`Field(description=...)` aparece como clave `"description"` dentro del JSON que
+viaja al proveedor; sin `Field` esa clave no existe. El docstring de la clase
+llena el `"description"` **raíz** del schema (verificado corriendo
+`model_json_schema()`).
 
-Las tres `Field(description=...)` acordadas:
+### Decisión E — modelo pelado, instrucciones de formato en el system prompt
+
+`ContractChangeOutput` queda **sin `Field`**: tres campos, tipos, y un docstring.
+Razón: las instrucciones de formato se concentran en el system prompt del
+`ExtractionAgent` en vez de repartirse entre dos archivos.
+
+**Riesgo asumido, hay que tenerlo listo para la defensa:** la rúbrica 1.3
+penaliza explícitamente "faltan descripciones de campo". Hay que poder justificar
+por qué el formato vive en el prompt y mostrar que el output igual sale
+trazable. Si en la primera corrida real el modelo normaliza la numeración o
+inventa cambios, **revertir**: volver a poner los `Field`.
+
+Regla de reparto acordada: *si la instrucción se puede escribir sin nombrar
+ningún campo, va al system prompt; si arranca con el nombre de un campo, iría en
+su description.* Con la Decisión E, todo va al prompt.
+
+### Material para el system prompt del ExtractionAgent
+
+Estos textos ya no están en el schema, pero son lo que hay que meter en el
+system prompt. No se pierden:
 
 ```python
 sections_changed: list[str] = Field(
@@ -343,13 +363,20 @@ real.** Son material directo para la sección de decisiones técnicas del README
 
 ## 8. Próximo paso
 
-1. Correr la comparación de schemas (no necesita API key ni archivo nuevo):
-   `uv run python -c "from src.models import *; import json; print(json.dumps(ContractChangeOutput.model_json_schema(), indent=2, ensure_ascii=False)); print(json.dumps(ContractChangeOutput_field.model_json_schema(), indent=2, ensure_ascii=False))"`
-2. Borrar la clase sin `Field` y renombrar la otra a `ContractChangeOutput`.
-3. Pasar a **Etapa 2: `data/test_contracts/`**.
+**Etapa 2: `data/test_contracts/`.**
 
-Nota de entorno: el proyecto usa `uv` + `pyproject.toml`. La consigna pide
-`requirements.txt`; se genera al final con `uv export`, no se mantiene a mano.
+Decisión previa: contratos **generados**, no reales — sin ground truth escrito de
+antemano no hay forma de distinguir "el parser funciona" de "el parser alucinó
+algo verosímil". 2 pares: uno limpio (control) y uno degradado (el de la demo).
+
+Bloqueante antes de crear el primer archivo: **elegir la convención de numeración
+de cláusulas.** Con la Decisión E esa convención ya no vive en el schema, así que
+tiene que quedar escrita en el system prompt del `ExtractionAgent` y coincidir
+con lo que digan los contratos.
+
+Nota de entorno: el proyecto usa `uv` + `pyproject.toml` + `uv.lock`.
+`requirements.txt` está **descartado** — el profesor confirmó que el lock de uv
+cumple el requisito de versiones fijadas. Justificar esto en el README.
 
 Decisión pendiente ahí: ¿generar los contratos yo o conseguir contratos reales?
 Hay un trade-off que conviene pensar antes de empezar a crear archivos.
