@@ -1,382 +1,214 @@
-# CLAUDE.md — Proyecto integrador módulo 4 (Soy Henry)
+# CLAUDE.md — ClauseWatch
 
-## 0. Cómo tenés que trabajar conmigo — LEER PRIMERO
-
-Este es un **proyecto de aprendizaje evaluado con defensa oral**. Voy a tener que
-explicar cada decisión de diseño frente a un evaluador y justificar por qué el
-sistema está armado como está.
-
-Por lo tanto:
-
-**NO escribas código por mí.** Ni siquiera si te lo pido con impaciencia.
-Si te pido "escribime el archivo X", tu respuesta correcta es darme el esqueleto
-con los huecos marcados y las preguntas que tengo que responder para llenarlos.
-
-**Modo de trabajo obligatorio:**
-
-1. Explicame qué tengo que construir y por qué va en ese orden.
-2. Decime qué parte de la documentación leer, con link, y qué buscar
-   específicamente en esa página.
-3. Hacéme preguntas que me obliguen a razonar el trade-off antes de decidir.
-4. Yo escribo el código y te lo paso.
-5. Vos lo revisás línea por línea, con feedback técnico directo y sin suavizar.
-
-**Excepciones donde sí podés escribir código completo:**
-- Boilerplate sin decisiones de diseño (`.env.example`, `.gitignore`).
-- Cuando yo ya escribí algo y te pido la corrección concreta de un bug.
-- Snippets cortos de referencia para ilustrar una diferencia conceptual
-  (ej: mostrarme dos formas de hacer lo mismo para que compare).
-
-**Señal de alarma:** si noto que estoy haciendo la misma pregunta conceptual por
-tercera vez sin haber escrito código, cortame. Decímelo directo: probablemente
-esté postergando escribir por ansiedad, y solo se resuelve corriendo el código.
-
-**Idioma:** conversación en español rioplatense. Código, nombres de archivo,
-nombres de campo y descriptions de schema en inglés.
+Proyecto integrador módulo 4, Soy Henry. Evaluado con **defensa oral**: tengo que
+poder explicar y justificar cada decisión frente a un evaluador.
 
 ---
 
-## 1. Contexto del proyecto
+## 0. Cómo trabajás conmigo — REGLAS, no sugerencias
 
-Empresa ficticia: **LegalMove**, tecnología legal, procesa miles de enmiendas de
-contratos por mes. El equipo de Compliance pasa 40+ horas semanales comparando
-manualmente contratos originales contra sus adendas para identificar qué cambió.
+**1. No escribís código salvo que yo lo pida explícitamente.**
+Por defecto explicás, mostrás la doc, y escribo yo. Si te pido "escribime X",
+ahí sí lo escribís. Única excepción automática: boilerplate sin ninguna decisión
+de diseño adentro (`.gitignore`, `.env.example`). Ante la duda, preguntás.
 
-**Misión:** construir un sistema multiagente autónomo que reciba imágenes
-escaneadas de un contrato y su enmienda, las lea con un modelo de visión, y use
-dos agentes especializados para extraer qué cláusulas se modificaron, devolviendo
-un JSON validado con trazabilidad completa.
+**2. Enseñás como profesor, no como ejecutor.**
+Sos un AI Engineer senior dándome clase. Cada vez que pregunto algo, la respuesta
+tiene: qué es, por qué existe, qué alternativas hay, cuál elegirías vos y por qué.
+Nunca "hacé esto y listo". Si me equivoco, corregime directo y sin suavizar.
 
-Nombre del proyecto: **ClauseWatch** (cerrado — ya está en `pyproject.toml` y en el repo).
+**3. Documentación verificada ANTES del código.**
+Antes de cada tarea nueva que toque una librería, traés la doc oficial vigente.
+Ruta: Context7 primero (`resolve-library-id` → `query-docs`); si la librería no
+está ahí, web search incluyendo el año actual en la query. Citás URL y fecha.
+
+Etiquetá cada afirmación técnica:
+- ✅ **Verificado** — con URL y fecha de consulta.
+- ⚠️ **De memoria** — "puede estar desactualizado, hay que confirmarlo".
+
+Nunca presentes algo ⚠️ como si fuera ✅. Si no pudiste verificar, decilo.
+
+**4. Este archivo no es tu cuaderno de notas.**
+Acá solo va: (a) lo que dice `consigna.md`, (b) lo que yo decidí explícitamente,
+(c) hechos que verificaste con fuente citada. No inventes decisiones de
+arquitectura ni las escribas como cerradas si yo no las cerré.
+
+**5. Idioma.** Conversación en español rioplatense. Código, nombres de archivo,
+nombres de campo y prompts en inglés (los prompts pueden pedir salida en español).
 
 ---
 
-## 2. Stack técnico obligatorio
+## 1. Qué hay que construir
 
-| Componente | Uso |
+Empresa ficticia **LegalMove**, tecnología legal. Compliance pierde 40+ hs
+semanales comparando contratos originales contra sus enmiendas a mano.
+
+Sistema multi-agente que recibe **dos imágenes escaneadas** (contrato original y
+adenda), las lee con un modelo de visión, y con **dos agentes especializados**
+extrae qué cláusulas cambiaron. Salida: **JSON validado con Pydantic**, con
+**trazabilidad completa en Langfuse**.
+
+### Stack obligatorio
+
+| Componente | Para qué |
 |---|---|
-| OpenAI GPT-4o (Vision) | Parsear imágenes de contratos a texto |
-| LangChain | Implementar y orquestar los dos agentes |
-| Pydantic | Validar y estructurar el output final |
-| Langfuse | Trazado completo del workflow |
-| Python + python-dotenv | Base y manejo de variables de entorno |
+| OpenAI GPT-4o (Vision) | parsear las imágenes a texto estructurado |
+| LangChain | implementar y orquestar los dos agentes |
+| Pydantic | validar y estructurar el output final |
+| Langfuse | trazado completo del workflow |
+| Python + python-dotenv | base y variables de entorno |
 
-### Trampas de versión — CRÍTICO
+### Los 5 pasos
 
-El ecosistema se movió mucho y **casi todos los tutoriales que voy a encontrar
-googleando están rotos**. Si me ves copiando cualquiera de estos patrones, frename:
-
-**Langfuse — SDK reescrito en v4 (marzo 2026):**
-- `from langfuse.callback import CallbackHandler` → viejo (v2)
-- `from langfuse.decorators import observe` → viejo (v2)
-- Correcto: `from langfuse import observe, get_client`
-- Correcto: `from langfuse.langchain import CallbackHandler`
-- Verificar nomenclatura exacta del SDK v4 en la doc antes de escribir, no de memoria.
-
-**LangChain — 1.0 (octubre 2025):**
-- `LLMChain`, `SequentialChain`, `ConversationChain`, `initialize_agent` → viejo,
-  movido al paquete `langchain-classic`. No construir nada nuevo ahí.
-- LCEL (el operador `|`) y la interfaz `Runnable` **NO** están deprecados.
-  Son `langchain-core` 1.0 y son la base sobre la que está construido `create_agent`.
-- La doc de LangChain 1.0 le da poco espacio a las chains porque se
-  reposicionaron como framework de agentes. Eso es marketing, no obsolescencia.
-
-**Regla de filtro rápida:** si el ejemplo tiene `LLMChain(llm=..., prompt=...)`,
-es de 2023. Si tiene `prompt | model`, es actual.
-
-### Documentación de referencia
-
-- Langfuse instrumentación: https://langfuse.com/docs/observability/sdk/python/instrumentation
-- Langfuse + LangChain: https://docs.langchain.com/oss/python/integrations/providers/langfuse
-- Langfuse compatibilidad de versiones: https://langfuse.com/docs/compatibility
-- LangChain v1 / create_agent: https://docs.langchain.com/oss/python/releases/langchain-v1
-- LangChain overview (buscar acá `with_structured_output`): https://docs.langchain.com/oss/python/langchain/overview
-- LCEL conceptual: https://python.langchain.com/docs/concepts/lcel/
-- Runnable API reference: https://reference.langchain.com/python/langchain_core/runnables/
-- OpenAI: navegar desde `platform.openai.com/docs` → Guides → "images and vision"
-  y "structured outputs". La URL de vision cambió de lugar varias veces, no
-  confiar en links viejos.
+1. **Parsing multimodal** — `parse_contract_image(path)`: encode base64 + llamada
+   multimodal a GPT-4o. Se ejecuta 2 veces (original y enmienda). Observabilidad
+   por spans de Langfuse.
+2. **Agente 1 `ContextualizationAgent`** — recibe los dos textos parseados.
+   Produce un análisis de estructura comparada: qué secciones existen en ambos,
+   cómo se corresponden, propósito de cada bloque. Output puede ser texto
+   estructurado, **no necesariamente JSON**. **No extrae cambios.**
+3. **Agente 2 `ExtractionAgent`** — recibe el mapa del Agente 1 **más ambos
+   textos**. Identifica, aísla y describe cada cambio. Distingue **adiciones,
+   eliminaciones y modificaciones**. Output: JSON estructurado.
+4. **Validación Pydantic** — `ContractChangeOutput`. Vía `model_validate()` o
+   structured outputs con `response_format`.
+5. **Trazabilidad Langfuse** — span raíz `contract-analysis` con hijos
+   `parse_original_contract`, `parse_amendment_contract`,
+   `contextualization_agent`, `extraction_agent`. Cada span con input, output,
+   latencia y metadata.
 
 ---
 
-## 3. Entregables (repo público de GitHub)
+## 2. Entregables (repo público de GitHub)
 
 | Archivo | Contenido |
 |---|---|
-| `src/main.py` | Entry point, acepta dos paths de imágenes como argumentos |
-| `src/agents/contextualization_agent.py` | Agente 1, con system prompt y lógica propios |
-| `src/agents/extraction_agent.py` | Agente 2, con system prompt y lógica propios |
-| `src/image_parser.py` | Validación, encoding base64, llamadas multimodales |
+| `src/main.py` | entry point, acepta dos paths de imágenes como argumentos |
+| `src/agents/contextualization_agent.py` | Agente 1, system prompt y lógica propios |
+| `src/agents/extraction_agent.py` | Agente 2, system prompt y lógica propios |
+| `src/image_parser.py` | validación, encoding base64, llamadas multimodales |
 | `src/models.py` | `ContractChangeOutput` con los tres campos |
-| `data/test_contracts/` | Mínimo 2 pares (4 imágenes) + README explicativo |
-| `README.md` | Diagramas, arquitectura, setup, uso, decisiones técnicas |
-| `pyproject.toml` + `uv.lock` + `.env.example` | Versiones fijadas + template de env vars |
-
-### Los 5 pasos de la consigna
-
-1. **Parsing multimodal** — `parse_contract_image()` recibe path, codifica en
-   base64, llama a GPT-4o vision. Se ejecuta dos veces (original y enmienda).
-   Observabilidad vía spans de Langfuse.
-2. **Agente 1: `ContextualizationAgent`** — recibe los dos textos parseados,
-   produce un análisis de estructura comparada: qué secciones existen en ambos,
-   cómo se corresponden, propósito de cada bloque. Output puede ser texto
-   estructurado, **no necesariamente JSON**. No extrae cambios.
-3. **Agente 2: `ExtractionAgent`** — recibe el mapa contextual del Agente 1 más
-   ambos textos. Identifica, aísla y describe cada cambio. Distingue adiciones,
-   eliminaciones y modificaciones. Output: JSON estructurado.
-4. **Validación Pydantic** — `ContractChangeOutput` con `sections_changed`,
-   `topics_touched`, `summary_of_the_change`. Vía `model_validate()` o
-   structured outputs con `response_format`.
-5. **Trazabilidad Langfuse** — span raíz `contract-analysis` con hijos:
-   `parse_original_contract`, `parse_amendment_contract`,
-   `contextualization_agent`, `extraction_agent`.
+| `data/test_contracts/` | mínimo 2 pares (4 imágenes) + README explicativo |
+| `README.md` | diagramas, arquitectura, setup, uso, decisiones técnicas |
+| `requirements.txt` + `.env.example` | versiones fijadas + template de env vars |
 
 ---
 
-## 4. Rúbrica (100 puntos) — optimizar para el nivel "excelente"
+## 3. Rúbrica — 100 pts, apuntar a "Excelente"
 
-| Criterio | Pts | Qué pide el nivel excelente |
+| Criterio | Pts | Nivel excelente |
 |---|---|---|
-| 1.1 Parsing multimodal | 15 | GPT-4o Vision + base64, texto preciso respetando jerarquías de cláusulas |
-| 1.2 Arquitectura 2 agentes | 15 | Separación clara + handoff lógico donde el 2do usa el mapa del 1ro |
-| 1.3 Validación Pydantic | 10 | Cumple estrictamente el modelo, maneja `ValidationError` con mensajes claros |
-| 2.1 Calidad del prompting | 15 | System prompts especializados por rol (Analista Senior vs Auditor) |
-| 2.2 Gestión API y errores | 10 | Manejo robusto de timeouts, límites de tokens, encoding. Nada hardcodeado |
-| 3.1 Trazabilidad workflow | 15 | Traza padre con jerarquía de spans + inputs, outputs, latencia, tokens |
-| 4.1 Estructura y README | 10 | Código modular, README con diagrama de arquitectura y justificación técnica |
-| 5.1 Defensa técnica en vivo | 10 | Explica decisiones con fluidez, muestra Langfuse, demo con 2 casos |
+| 1.1 Parsing multimodal | 15 | GPT-4o Vision + base64. Texto preciso **respetando jerarquías** (cláusulas/secciones) |
+| 1.2 Arquitectura 2 agentes | 15 | Separación clara + handoff donde el 2do **usa el mapa del 1ro** |
+| 1.3 Validación Pydantic | 10 | Cumple estricto el modelo. Maneja `ValidationError` con mensajes claros |
+| 2.1 Calidad del prompting | 15 | System prompts **altamente especializados** por rol (Analista Senior vs Auditor) |
+| 2.2 Gestión API y errores | 10 | Timeouts, límites de tokens, encoding. Env vars bien usadas |
+| 3.1 Trazabilidad | 15 | Traza padre + jerarquía de spans. Inputs, outputs, latencia, tokens |
+| 4.1 Estructura y README | 10 | Código modular. README con diagrama de arquitectura y justificación técnica |
+| 5.1 Defensa en vivo | 10 | Explica decisiones con fluidez, muestra Langfuse, demo con 2 casos |
 
-**Detalles de rúbrica que se pasan por alto fácil:**
-- 1.3 penaliza "faltan descripciones de campo" → las `Field(description=...)` no
-  son opcionales.
-- 3.1 penaliza traza "plana, sin jerarquía" y "faltan métricas de tokens/costo"
-  → un `@observe()` pelado crea un **span**, no una **generation**, y no registra
-  tokens.
-- 2.2 penaliza "configuraciones hardcodeadas" → no solo la API key.
+**Frases exactas que bajan la nota** (citadas de la rúbrica, sirven de checklist):
+- 1.3 satisfactorio: *"faltan descripciones de campo/tipado"*
+- 2.2 satisfactorio: *"algunas claves o configuraciones están hardcodeadas"*
+- 3.1 satisfactorio: *"de forma plana (sin jerarquía de spans)"*, *"faltan métricas críticas de tokens/costo"*
+- 1.2 insatisfactorio: *"los agentes no colaboran (corren de forma independiente sin compartir contexto)"*
 
 ---
 
-## 5. Decisiones de arquitectura
+## 4. Estado real del repo — verificado 2026-09-02
 
-### Cerradas
-
-**Decisión A — Chains (LCEL) dentro de clases, NO `create_agent`.**
-Razón: ninguno de los dos agentes tiene tools. Un agent loop con `tools=[]` da
-cero vueltas — es una chain envuelta en LangGraph, con overhead de orquestación
-y spans intermedios sin ninguna decisión real que tomar. Cada agente queda
-encapsulado en su clase con su system prompt y su responsabilidad; el handoff es
-explícito. La rúbrica evalúa especialización de roles y calidad del handoff,
-nunca menciona tools ni autonomía.
-
-Esta justificación **va escrita en el README desde el día uno**, no al final.
-
-Criterio general que aplica acá: *¿el componente necesita decidir cuántas veces
-llamar al modelo?* Si no, es una chain.
-
-**Decisión B — Structured outputs Y `model_validate()`, las dos.**
-`with_structured_output(ContractChangeOutput)` para que el problema no ocurra
-(sin markdown fences, sin tipos mal), más `try/except ValidationError` como red
-de contención con mensaje claro. Si nunca falla, el `except` no se ejecuta y no
-cuesta nada. Si falla, hay un mensaje útil en vez de un stack trace. Eso es
-literalmente lo que pide el nivel excelente de 1.3.
-
-Nota: structured outputs garantiza la **forma**, no el **contenido**. El modelo
-puede devolver `sections_changed: []` válido y equivocado.
-
-**Sobre `with_structured_output`:** es un método del **chat model**, no del
-agente. Devuelve un Runnable nuevo con el schema atado. `result` es una instancia
-de `ContractChangeOutput` ya construida, no un string ni un dict — no hay que
-parsear nada.
-
-**El `ContextualizationAgent` NO lleva `with_structured_output`.** La consigna es
-explícita: su output puede ser texto estructurado, no necesariamente JSON. Solo
-el segundo agente devuelve el modelo Pydantic.
-
-### Abiertas
-
-**Decisión C — ¿SDK de OpenAI directo o LangChain para el parsing multimodal?**
-- SDK directo: control total, pero la traza en Langfuse se instrumenta a mano.
-- LangChain: el `CallbackHandler` da la traza gratis, incluidos tokens y costo.
-
-Pregunta a resolver: si uso el handler para los agentes pero el SDK directo para
-el parsing, ¿terminan en la misma traza o en dos separadas?
-
-**Decisión D — ¿Dónde va el span raíz `contract-analysis`?**
-Contexto necesario:
-- `@observe` es un decorador de función, no algo que se pone antes de una llamada.
-  El span dura lo que dura la función.
-- `@observe` no necesita `get_client()` previo — se autoabastece de las env vars.
-- `get_client()` sirve para: `flush()`, `update_current_span()` /
-  `update_current_generation()`, y abrir observaciones a mano.
-- **`flush()` no es opcional acá.** `main.py` es un script CLI que arranca, corre
-  y termina. El SDK manda eventos en background. Si el proceso muere antes de
-  vaciar el buffer, se pierde la traza entera.
-- **Ojo con la familia de métodos:** `start_span()` / `start_observation()` crean
-  la observación pero NO la vuelven contexto activo. `start_as_current_span()` /
-  `start_as_current_observation()` sí. Si abro el span raíz con la primera
-  familia, todo lo decorado con `@observe` queda como hermano y la traza sale
-  plana → nivel satisfactorio en vez de excelente.
-
-Pregunta a resolver: si decoro `main()`, el argparse y la validación de paths
-quedan dentro de la traza. ¿Importa?
-
-**Problema de nombres de spans:** `parse_contract_image` corre dos veces con la
-misma función decorada. `@observe(name="...")` acepta nombre, pero es **estático**
-— las dos invocaciones se llamarían igual. La consigna pide
-`parse_original_contract` y `parse_amendment_contract`. Tres salidas posibles:
-envolver cada llamada desde `main.py` en su propio context manager con el nombre
-correcto; dejar nombre genérico y distinguir por metadata
-(`document_role="original"` / `"amendment"`); o cambiar el nombre desde adentro
-con `update_current_span()`. Averiguar si el decorador soporta un kwarg reservado
-para nombre dinámico en tiempo de llamada.
-
-**Trampa del decorador:** `@observe` captura args y return por defecto. Si decoro
-la función de encoding, se suben megabytes de base64 a Langfuse en cada corrida.
-Se apaga con `capture_input=False` / `capture_output=False`, o globalmente por
-env var. Esto fuerza una separación de diseño buena: `encode_image_to_base64()`
-separada de `parse_contract_image()`. Una es I/O pura y no merece span; la otra
-es la llamada al modelo y sí.
-
-**Dónde vive la config de GPT-4o:** la API key sale de `.env` sí o sí. El nombre
-del modelo y la temperature son discutibles: instanciar en cada componente,
-centralizar en `src/config.py`, o hardcodear (no). Criterio: si mañana quiero
-probar otro modelo, ¿cuántos archivos toco? Decisión de etapa 3-4.
-
----
-
-## 6. Plan de etapas
-
-El orden de construcción **no** es el orden de la consigna. La consigna está
-escrita en orden de ejecución; si construyo en ese orden, al llegar al paso 4
-descubro que el JSON de los agentes no encaja con el schema y reescribo prompts.
-Se construye al revés: **primero el contrato de salida, después quien lo llena.**
-
-| # | Etapa | Entregable | Estado |
-|---|---|---|---|
-| 0 | Decisiones de arquitectura | (papel) | A y B cerradas, C y D abiertas |
-| 1 | `src/models.py` | `ContractChangeOutput` | EN CURSO |
-| 2 | `data/test_contracts/` | 4 imágenes + README | pendiente |
-| 3 | `src/image_parser.py` | `parse_contract_image()` | pendiente |
-| 4 | `src/agents/` | los dos agentes | pendiente |
-| 5 | `src/main.py` | pipeline + Langfuse | pendiente |
-| 6 | `README.md` + hardening | docs, errores, `.env.example` | pendiente |
-
-**Por qué la etapa 2 va antes de la 3:** sin un par de contratos donde yo ya sepa
-de antemano qué cambió, no tengo forma de saber si el parser funciona o alucina.
-
----
-
-## 7. Estado actual: Etapa 1
-
-**Etapa 1 CERRADA.** Ejercicio de comparación de schemas hecho: la
-`Field(description=...)` aparece como clave `"description"` dentro del JSON que
-viaja al proveedor; sin `Field` esa clave no existe. El docstring de la clase
-llena el `"description"` **raíz** del schema (verificado corriendo
-`model_json_schema()`).
-
-### Decisión E — modelo pelado, instrucciones de formato en el system prompt
-
-`ContractChangeOutput` queda **sin `Field`**: tres campos, tipos, y un docstring.
-Razón: las instrucciones de formato se concentran en el system prompt del
-`ExtractionAgent` en vez de repartirse entre dos archivos.
-
-**Riesgo asumido, hay que tenerlo listo para la defensa:** la rúbrica 1.3
-penaliza explícitamente "faltan descripciones de campo". Hay que poder justificar
-por qué el formato vive en el prompt y mostrar que el output igual sale
-trazable. Si en la primera corrida real el modelo normaliza la numeración o
-inventa cambios, **revertir**: volver a poner los `Field`.
-
-Regla de reparto acordada: *si la instrucción se puede escribir sin nombrar
-ningún campo, va al system prompt; si arranca con el nombre de un campo, iría en
-su description.* Con la Decisión E, todo va al prompt.
-
-### Material para el system prompt del ExtractionAgent
-
-Estos textos ya no están en el schema, pero son lo que hay que meter en el
-system prompt. No se pierden:
-
-```python
-sections_changed: list[str] = Field(
-    description=(
-        "Identifiers of the contract sections modified by the amendment, "
-        "as they appear literally in the source document. Keep the original "
-        "Spanish wording and numbering. Example: ['Cláusula 4.2', 'Cláusula 7']. "
-        "Empty list if no section was modified."
-    )
-)
-
-topics_touched: list[str] = Field(
-    description=(
-        "Legal or commercial categories affected by the changes, in Spanish. "
-        "Use short noun phrases, not sentences. "
-        "Example: ['plazo de pago', 'confidencialidad', 'jurisdicción']."
-    )
-)
-
-summary_of_the_change: str = Field(
-    description=(
-        "Detailed description of every change, written in Spanish. For each "
-        "change, state the section identifier, whether it is an addition, "
-        "a deletion or a modification, and what the clause said before versus "
-        "after. Do not generalize: cite the specific terms that changed."
-    )
-)
+```
+CLAUDE.md          consigna.md        pyproject.toml     uv.lock
+.env (ignorado)    .env.example       .gitignore         README.md (vacío)
+src/models.py
+src/contratos_ejemplo/   6 imágenes = 3 pares (documento_1/2/3, original + enmienda)
 ```
 
-**Razonamiento detrás de cada una** (necesario para la defensa oral):
+**Hecho:**
+- `src/models.py` — `ContractChangeOutput` con los 3 campos y docstring de clase.
+  Sin `Field(description=...)`. Ver §6.
+- 3 pares de contratos de prueba (la consigna pide mínimo 2). Están en
+  `src/contratos_ejemplo/`; la consigna los ubica en `data/test_contracts/`, y
+  falta el README explicativo de esa carpeta.
+- Entorno: `uv` + `pyproject.toml`. Instalado: `langchain 1.3.18`,
+  `langchain-openai 1.6.0`, `pydantic 2.13.5`, `python-dotenv 1.2.3`.
+- `.env` creado y gitignoreado. `.env.example` como template.
 
-- `"as they appear literally"` evita que el modelo normalice. Sin eso, un contrato
-  que dice "CLÁUSULA CUARTA" vuelve como `"4"` y el output deja de ser rastreable
-  contra el documento original. Compliance necesita poder buscar el string en el PDF.
-- `"Empty list if no section was modified"` cubre un caso feo: sin instrucción
-  explícita, el modelo tiende a inventar un cambio. Los LLMs no quieren volver
-  con las manos vacías.
-- `"short noun phrases, not sentences"` evita recibir
-  `["se modificó el plazo de pago de 30 a 60 días"]`, que es un resumen disfrazado
-  de categoría. Estos campos existen para filtrar y agrupar downstream.
-- La estructura obligatoria del summary (sección + tipo de cambio + antes/después)
-  es lo que lo hace auditable. `"Do not generalize"` es la diferencia entre
-  "se actualizaron las condiciones de pago" y "el plazo pasó de 30 a 60 días
-  corridos".
-- La distinción adición/eliminación/modificación que pide el Paso 3 no tiene
-  campo propio en el schema de tres campos. Meterla dentro del summary cumple sin
-  salirse del schema pedido.
+**Falta:** `src/image_parser.py`, `src/agents/` (los dos), `src/main.py`,
+Langfuse (ni instalado), `README.md`, README de `data/test_contracts/`.
 
-**Adaptar los ejemplos cuando vea los contratos reales.** Si mis contratos dicen
-"CLÁUSULA CUARTA", el ejemplo no puede ser "4.2".
+### Ground truth del par 1 — leído de las imágenes, verificar a mano
 
-**Anotar cada ajuste que haga a las descriptions después de la primera corrida
-real.** Son material directo para la sección de decisiones técnicas del README.
+`documento_1__original` vs `documento_1__enmienda`. Numeración `N. Título`.
 
-### Preguntas abiertas de la etapa 1
+| Cláusula | Tipo | Cambio |
+|---|---|---|
+| 1. Otorgamiento de Licencia | modificación | cae "e intransferible"; "únicamente para fines internos de la empresa" → "para operaciones internas de negocio" |
+| 2. Plazo | modificación | 12 → 24 meses |
+| 3. Pago | modificación | USD 12.000 → USD 15.000 |
+| 4. Soporte | modificación | correo → correo y chat |
+| 5. Terminación | modificación | 30 → 60 días de preaviso |
+| 6. Confidencialidad | **sin cambios** | — (trampa: el modelo va a querer reportarla igual) |
+| 7. Protección de Datos | **adición** | cláusula nueva |
 
-- `topics_touched` sigue siendo lista abierta. Un `Enum` daría consistencia total
-  a costa de romperse con cualquier tema no previsto. Decidir después de ver la
-  salida real.
-- Ejercicio pendiente: escribir la clase con y sin `Field`, correr
-  `print(ContractChangeOutput.model_json_schema())` y comparar las dos salidas.
-  No necesita API key. Es lo que demuestra que la description viaja dentro del
-  schema que se le manda al modelo — es prompt engineering que vive en el schema,
-  no documentación para humanos.
+Pares 2 y 3 sin analizar. Buscar ahí si hay alguna **eliminación** de cláusula
+entera — el par 1 no tiene ninguna, y el Paso 3 pide distinguir los tres tipos.
 
 ---
 
-## 8. Próximo paso
+## 5. Decisiones que ya tomé yo
 
-**Etapa 2: `data/test_contracts/`.**
+**`requirements.txt` descartado.** El profesor confirmó que `uv` +
+`pyproject.toml` + `uv.lock` cumple el requisito de versiones fijadas. La
+consigna lo pide igual; justificar el reemplazo en el README.
 
-Decisión previa: contratos **generados**, no reales — sin ground truth escrito de
-antemano no hay forma de distinguir "el parser funciona" de "el parser alucinó
-algo verosímil". 2 pares: uno limpio (control) y uno degradado (el de la demo).
+**`main.py` de la raíz borrado** — era el placeholder de `uv init`. El entry
+point va en `src/main.py`.
 
-Bloqueante antes de crear el primer archivo: **elegir la convención de numeración
-de cláusulas.** Con la Decisión E esa convención ya no vive en el schema, así que
-tiene que quedar escrita en el system prompt del `ExtractionAgent` y coincidir
-con lo que digan los contratos.
+---
 
-Nota de entorno: el proyecto usa `uv` + `pyproject.toml` + `uv.lock`.
-`requirements.txt` está **descartado** — el profesor confirmó que el lock de uv
-cumple el requisito de versiones fijadas. Justificar esto en el README.
+## 6. Abierto — resolver con evidencia, no discutiendo
 
-Decisión pendiente ahí: ¿generar los contratos yo o conseguir contratos reales?
-Hay un trade-off que conviene pensar antes de empezar a crear archivos.
+**`ContractChangeOutput` sin `Field(description=...)`.**
+Decidí sacar las descriptions y mover las instrucciones de formato al system
+prompt del `ExtractionAgent`. Riesgo conocido: la rúbrica 1.3 baja a
+satisfactorio si *"faltan descripciones de campo"*.
+Se resuelve empíricamente: correr el pipeline con y sin descriptions contra el
+par 1 y comparar contra el ground truth de §4. Si el modelo normaliza la
+numeración o inventa un cambio en la cláusula 6, vuelven los `Field`.
+Esa comparación es material directo para el README.
+
+**Chains (LCEL) vs `create_agent` para los dos agentes.** Ninguno de los dos
+agentes tiene tools. Decidir y justificar en el README.
+
+**Dónde vive la config del modelo** (nombre del modelo, temperature). La API key
+sale de `.env` sí o sí. Rúbrica 2.2 penaliza configuraciones hardcodeadas.
+
+**Nombres de spans.** `parse_contract_image()` corre dos veces con la misma
+función, pero los spans tienen que llamarse `parse_original_contract` y
+`parse_amendment_contract`. Verificar en la doc de Langfuse cómo se hace.
+
+---
+
+## 7. Disciplina de versiones
+
+El ecosistema se movió mucho; muchos tutoriales que voy a googlear están rotos.
+No copiar patrones sin verificarlos contra la doc oficial vigente.
+
+**Trampa confirmada — mensajes multimodales en LangChain**
+✅ Verificado en https://docs.langchain.com/oss/python/langchain/messages (2026-09-02)
+
+El formato estándar actual de bloque de imagen es:
+
+```python
+{"type": "image", "base64": b64, "mime_type": "image/jpeg"}
+```
+
+y va en `content_blocks=[...]`. El formato `{"type": "image_url", "image_url":
+{"url": "data:image/jpeg;base64,..."}}` es el **provider-native** de OpenAI:
+funciona, pero ata el código al proveedor. Filtro rápido: si el ejemplo dice
+`image_url`, es el camino viejo.
+
+**Pendiente de verificar antes de escribir una línea de Langfuse:** el SDK tuvo
+una reescritura mayor y los imports cambiaron. No escribir nada de Langfuse de
+memoria — traer la doc primero.
