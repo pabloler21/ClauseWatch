@@ -121,15 +121,17 @@ extrae qué cláusulas cambiaron. Salida: **JSON validado con Pydantic**, con
 CLAUDE.md          consigna.md        pyproject.toml     uv.lock
 .env (ignorado)    .env.example       .gitignore         README.md (vacío)
 src/models.py
-src/contratos_ejemplo/   6 imágenes = 3 pares (documento_1/2/3, original + enmienda)
+data/test_contracts/   6 imágenes = 3 pares
 ```
 
 **Hecho:**
 - `src/models.py` — `ContractChangeOutput` con los 3 campos y docstring de clase.
   Sin `Field(description=...)`. Ver §6.
-- 3 pares de contratos de prueba (la consigna pide mínimo 2). Están en
-  `src/contratos_ejemplo/`; la consigna los ubica en `data/test_contracts/`, y
-  falta el README explicativo de esa carpeta.
+- 3 pares de contratos de prueba en `data/test_contracts/` (la consigna pide
+  mínimo 2), nombrados `documento_N_original.jpg` / `documento_N_enmienda.jpg`
+  — el número del par va primero para que al ordenar queden los pares juntos.
+  **Falta el README explicativo de esa carpeta**, que la consigna pide como
+  parte del entregable.
 - Entorno: `uv` + `pyproject.toml`. Instalado: `langchain 1.3.18`,
   `langchain-openai 1.6.0`, `pydantic 2.13.5`, `python-dotenv 1.2.3`.
 - `.env` creado y gitignoreado. `.env.example` como template.
@@ -139,7 +141,7 @@ Langfuse (ni instalado), `README.md`, README de `data/test_contracts/`.
 
 ### Ground truth del par 1 — leído de las imágenes, verificar a mano
 
-`documento_1__original` vs `documento_1__enmienda`. Numeración `N. Título`.
+`documento_1_original` vs `documento_1_enmienda`. Numeración `N. Título`.
 
 | Cláusula | Tipo | Cambio |
 |---|---|---|
