@@ -109,7 +109,10 @@ def run_contract_analysis(
         original_text, amendment_text, contextual_map
     )
 
-    return contract_changes
+    # Obtiene la URL de la traza activa directamente del contexto de observabilidad.
+    trace_url = get_client().get_trace_url()
+
+    return contract_changes, trace_url
 
 
 # --- Interfaz de linea de comandos (CLI) ------------------------------------
@@ -142,8 +145,11 @@ def main() -> int:
     # Inicializa el cliente de Langfuse para verificar conectividad y vaciar el buffer al final.
     lf_client = get_client()
 
+    trace_url: str | None = None
     try:
-        results = run_contract_analysis(args.original_image, args.amendment_image)
+        results, trace_url = run_contract_analysis(
+            args.original_image, args.amendment_image
+        )
     except FileNotFoundError as e:
         print(f"\n[ERROR DE ARCHIVO] {e}", file=sys.stderr)
         return 1
@@ -167,14 +173,10 @@ def main() -> int:
     print(json.dumps(results.model_dump(), indent=2, ensure_ascii=False))
 
     # Imprime el link directo a la traza en Langfuse para auditoria y defensa oral.
-    try:
-        latest_trace = lf_client.api.trace.list(limit=1).data[0]
-        trace_url = lf_client.get_trace_url(trace_id=latest_trace.id)
+    if trace_url:
         print("\n" + "-" * 60)
         print(f"Trazabilidad Langfuse: {trace_url}")
         print("-" * 60)
-    except Exception:
-        pass
 
     return 0
 
