@@ -111,7 +111,10 @@ def encode_image_to_base64(image_path: Path) -> str:
     return base64.b64encode(image_path.read_bytes()).decode("utf-8")
 
 
-def parse_contract_image(image_path: str | Path) -> str:
+def parse_contract_image(
+    image_path: str | Path,
+    callbacks: list | None = None,
+) -> str:
     """Transcribe la imagen de un contrato a texto usando un modelo de vision.
 
     Se ejecuta dos veces por analisis, una por documento. No sabe cual de los
@@ -120,6 +123,7 @@ def parse_contract_image(image_path: str | Path) -> str:
 
     Args:
         image_path: Ruta a la imagen del contrato. Acepta str o Path.
+        callbacks: Lista opcional de callbacks (ej. Langfuse CallbackHandler).
 
     Returns:
         El texto del contrato, respetando la jerarquia de clausulas.
@@ -175,8 +179,9 @@ def parse_contract_image(image_path: str | Path) -> str:
         ),
     ]
 
-    # invoke() recibe el input posicionalmente; el parametro se llama `input`.
-    response = model.invoke(messages)
+    # invoke() recibe el input posicionalmente; config propaga callbacks como Langfuse.
+    config = {"callbacks": callbacks} if callbacks else None
+    response = model.invoke(messages, config=config)
 
     # Truncacion silenciosa: si el modelo choca contra max_tokens no lanza
     # excepcion, devuelve medio contrato. El agente extractor lo reportaria

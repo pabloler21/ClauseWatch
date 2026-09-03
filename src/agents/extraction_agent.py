@@ -55,6 +55,7 @@ def extract_contract_changes(
     original_text: str,
     amendment_text: str,
     contextual_map: str,
+    callbacks: list | None = None,
 ) -> ContractChangeOutput:
     """Extrae y estructura los cambios entre contratos usando el mapa de contextualizacion.
 
@@ -62,6 +63,7 @@ def extract_contract_changes(
         original_text: Texto completo transcripto del contrato original.
         amendment_text: Texto completo transcripto del contrato enmendado.
         contextual_map: Mapa de alineacion estructural generado por el Agente 1.
+        callbacks: Lista opcional de callbacks (ej. Langfuse CallbackHandler).
 
     Returns:
         ContractChangeOutput: Objeto Pydantic validado con las secciones
@@ -95,8 +97,9 @@ def extract_contract_changes(
         HumanMessage(content=user_prompt),
     ]
 
+    config = {"callbacks": callbacks} if callbacks else None
     try:
-        result = structured_model.invoke(messages)
+        result = structured_model.invoke(messages, config=config)
     except ValidationError as error:
         raise RuntimeError(
             f"Fallo la validacion de ContractChangeOutput con Pydantic: {error}"

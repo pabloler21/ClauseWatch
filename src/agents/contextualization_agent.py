@@ -42,12 +42,17 @@ CRITICAL RULES:
 """
 
 
-def analyze_contract_structure(original_text: str, amendment_text: str) -> str:
+def analyze_contract_structure(
+    original_text: str,
+    amendment_text: str,
+    callbacks: list | None = None,
+) -> str:
     """Analiza la estructura de dos documentos legales y genera un mapa de alineacion.
 
     Args:
         original_text: Texto del contrato original.
         amendment_text: Texto del contrato enmendado.
+        callbacks: Lista opcional de callbacks (ej. Langfuse CallbackHandler).
 
     Returns:
         Un string con el mapa de alineacion estructural en formato Markdown.
@@ -76,7 +81,8 @@ def analyze_contract_structure(original_text: str, amendment_text: str) -> str:
     ]
 
     # invoke() es el metodo estandar de Runnables/ChatModels en LangChain.
-    response = chat_model.invoke(messages)
+    config = {"callbacks": callbacks} if callbacks else None
+    response = chat_model.invoke(messages, config=config)
 
     # Previene truncamiento silencioso del mapa estructural.
     if response.response_metadata.get("finish_reason") == "length":
