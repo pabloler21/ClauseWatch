@@ -36,6 +36,21 @@ arquitectura ni las escribas como cerradas si yo no las cerré.
 **5. Idioma.** Conversación en español rioplatense. Código, nombres de archivo,
 nombres de campo y prompts en inglés (los prompts pueden pedir salida en español).
 
+**6. Nada de "ponytail" ni de minimalismo agresivo en este proyecto.**
+No uses ese modo, ni sus comentarios `# ponytail:`, ni recortes código en nombre
+de la brevedad. Este es un proyecto de aprendizaje con defensa oral: el código
+tiene que poder leerlo y entenderlo alguien junior, y yo tengo que poder
+explicarlo. Por lo tanto:
+- Docstrings completos, con `Args`, `Returns` y `Raises`.
+- Type hints en todas las firmas.
+- Constantes con nombre en vez de valores sueltos en el medio del código.
+- Preferí lo explícito y legible antes que lo corto e ingenioso.
+
+**Pero los comentarios van cortos: 1 o 2 líneas.** Explican el **por qué** de una
+decisión, no narran lo que la línea ya dice. Nada de bloques de comentario de
+diez líneas ni ensayos dentro del código. La explicación larga va en la
+conversación o en el README, no en el `.py`.
+
 ---
 
 ## 1. Qué hay que construir
@@ -137,24 +152,23 @@ data/test_contracts/   6 imágenes = 3 pares
 - `.env` creado y gitignoreado. `.env.example` como template.
 
 **Falta:** `src/image_parser.py`, `src/agents/` (los dos), `src/main.py`,
-Langfuse (ni instalado), `README.md`, README de `data/test_contracts/`.
+Langfuse (ni instalado), `README.md` raíz.
 
-### Ground truth del par 1 — leído de las imágenes, verificar a mano
+### Ground truth
 
-`documento_1_original` vs `documento_1_enmienda`. Numeración `N. Título`.
+Vive en **`data/test_contracts/README.md`**, con los tres pares analizados
+cláusula por cláusula. Fuente única: no duplicar esas tablas acá.
 
-| Cláusula | Tipo | Cambio |
-|---|---|---|
-| 1. Otorgamiento de Licencia | modificación | cae "e intransferible"; "únicamente para fines internos de la empresa" → "para operaciones internas de negocio" |
-| 2. Plazo | modificación | 12 → 24 meses |
-| 3. Pago | modificación | USD 12.000 → USD 15.000 |
-| 4. Soporte | modificación | correo → correo y chat |
-| 5. Terminación | modificación | 30 → 60 días de preaviso |
-| 6. Confidencialidad | **sin cambios** | — (trampa: el modelo va a querer reportarla igual) |
-| 7. Protección de Datos | **adición** | cláusula nueva |
+Resumen: par 1 = 5 modificaciones + 1 adición + 1 sin cambios. Par 2 = 4
+modificaciones + 1 adición + 2 sin cambios. Par 3 = 3 modificaciones + 2 sin
+cambios.
 
-Pares 2 y 3 sin analizar. Buscar ahí si hay alguna **eliminación** de cláusula
-entera — el par 1 no tiene ninguna, y el Paso 3 pide distinguir los tres tipos.
+**Limitación conocida del set: ningún par elimina una cláusula entera.** Los
+tres documentos enmendados conservan todas las cláusulas del original. La única
+eliminación es interna (par 1, cláusula 1: desaparece "e intransferible"). El
+Paso 3 pide distinguir adiciones, eliminaciones y modificaciones — con este set
+la eliminación solo se demuestra a nivel de texto, no de cláusula. Decidir si se
+agrega un par 4 o si se justifica la limitación en la defensa.
 
 ---
 
@@ -183,8 +197,14 @@ Esa comparación es material directo para el README.
 **Chains (LCEL) vs `create_agent` para los dos agentes.** Ninguno de los dos
 agentes tiene tools. Decidir y justificar en el README.
 
-**Dónde vive la config del modelo** (nombre del modelo, temperature). La API key
-sale de `.env` sí o sí. Rúbrica 2.2 penaliza configuraciones hardcodeadas.
+**Config del modelo hardcodeada en la llamada.** Decidí definir `"openai:gpt-4o"`,
+`temperature`, `timeout` y `max_tokens` como literales dentro de
+`init_chat_model()`, en vez de leerlos del `.env`. La API key sí sale de `.env`
+(LangChain la toma sola de `os.environ`).
+Riesgo conocido: la rúbrica 2.2 baja a satisfactorio con *"algunas claves o
+configuraciones están hardcodeadas"*. Cuando existan los dos agentes, cada uno
+va a instanciar su propio modelo — ahí se ve cuántos archivos hay que tocar para
+cambiar de modelo, y si conviene volver atrás o centralizar en `src/config.py`.
 
 **Nombres de spans.** `parse_contract_image()` corre dos veces con la misma
 función, pero los spans tienen que llamarse `parse_original_contract` y
