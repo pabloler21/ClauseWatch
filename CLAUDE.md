@@ -130,29 +130,75 @@ extrae qué cláusulas cambiaron. Salida: **JSON validado con Pydantic**, con
 
 ---
 
-## 4. Estado real del repo — verificado 2026-09-02
+## 4. Estado real del repo — verificado 2026-09-03
 
 ```
 CLAUDE.md          consigna.md        pyproject.toml     uv.lock
-.env (ignorado)    .env.example       .gitignore         README.md (vacío)
-src/models.py
-data/test_contracts/   6 imágenes = 3 pares
+.env (ignorado)    .env.example       .gitignore         README.md (VACÍO, 0 bytes)
+src/models.py      src/image_parser.py    src/main.py
+src/agents/contextualization_agent.py
+src/agents/extraction_agent.py
+data/test_contracts/   6 imágenes = 3 pares + README.md (ground truth)
 ```
 
-**Hecho:**
+**Hecho — pipeline completo de los 5 pasos, corriendo end-to-end:**
 - `src/models.py` — `ContractChangeOutput` con los 3 campos y docstring de clase.
   Sin `Field(description=...)`. Ver §6.
+- `src/image_parser.py` — Paso 1. `validate_image_file()` +
+  `encode_image_to_base64()` + `parse_contract_image()`. Bloques multimodales
+  estándar (`{"type": "image", "base64": ..., "mime_type": ...}`), timeout 60 s,
+  `max_tokens=4000`, guardia contra truncamiento por `finish_reason == "length"`.
+- `src/agents/contextualization_agent.py` — Paso 2. Agente 1, rol "Senior Legal
+  Contract Analyst". Devuelve Markdown, no JSON. Regla negativa explícita que le
+  prohíbe extraer cambios.
+- `src/agents/extraction_agent.py` — Paso 3 + 4. Agente 2, rol "Senior Legal
+  Compliance Auditor". Usa `with_structured_output(ContractChangeOutput)`.
+- `src/main.py` — Paso 5. CLI con `argparse`, span raíz `contract-analysis` y
+  cuatro hijos vía `@observe`, `CallbackHandler` de LangChain por etapa,
+  `flush()` en `finally`, imprime JSON + URL de la traza.
 - 3 pares de contratos de prueba en `data/test_contracts/` (la consigna pide
   mínimo 2), nombrados `documento_N_original.jpg` / `documento_N_enmienda.jpg`
   — el número del par va primero para que al ordenar queden los pares juntos.
-  **Falta el README explicativo de esa carpeta**, que la consigna pide como
-  parte del entregable.
+  Su `README.md` es el ground truth.
 - Entorno: `uv` + `pyproject.toml`. Instalado: `langchain 1.3.18`,
-  `langchain-openai 1.6.0`, `pydantic 2.13.5`, `python-dotenv 1.2.3`.
+  `langchain-core 1.6.1`, `langchain-openai 1.6.0`, `openai 3.7.0`,
+  `pydantic 2.13.5`, `python-dotenv 1.2.3`, `langfuse 4.15.1`.
 - `.env` creado y gitignoreado. `.env.example` como template.
 
-**Falta:** `src/image_parser.py`, `src/agents/` (los dos), `src/main.py`,
-Langfuse (ni instalado), `README.md` raíz.
+**Falta:**
+- `README.md` de la raíz: está **vacío (0 bytes)**. Es el entregable de la
+  rúbrica 4.1 (10 pts) y hoy vale 0.
+- Limpiar dependencias muertas de `pyproject.toml`: `pillow` y `pytesseract`
+  quedaron de una idea de OCR local que se descartó, y `dotenv` (0.9.9) es un
+  paquete distinto y redundante con `python-dotenv`. Un evaluador que lea el
+  `pyproject.toml` va a preguntar por qué hay un OCR instalado en un proyecto
+  que usa GPT-4o Vision.
+
+### Traza de referencia verificada en Langfuse — 2026-09-03
+
+Jerarquía real observada en Langfuse Cloud US (par 1), corrida de 27,14 s:
+
+```
+contract-analysis            27.14s   $0.026147   Σ 6.343 tokens
+├── parse_original_contract   9.19s   $0.005745
+│   └── ChatOpenAI            6.81s   1.286 → 253    (GENERATION)
+├── parse_amendment_contract  7.06s   $0.006145
+│   └── ChatOpenAI            7.05s   1.286 → 293    (GENERATION)
+├── contextualization_agent   5.61s   $0.006905
+│   └── ChatOpenAI            5.61s     854 → 477    (GENERATION)
+└── extraction_agent          4.63s   $0.007353
+    └── RunnableSequence      4.63s                  (CHAIN)
+        ├── ChatOpenAI        4.62s   1.545 → 349    (GENERATION)
+        └── RunnableLambda                           (parser Pydantic)
+```
+
+Cubre la rúbrica 3.1 nivel excelente: traza padre, jerarquía real (no plana),
+inputs/outputs por span, latencia, tokens y costo por generación.
+
+`extraction_agent` cuelga de un `RunnableSequence` en vez de un `ChatOpenAI`
+directo porque `with_structured_output()` devuelve una cadena compuesta
+(modelo + parser); el `RunnableLambda` es ese parser. Es una diferencia
+esperada, no un error.
 
 ### Ground truth
 
@@ -206,9 +252,29 @@ configuraciones están hardcodeadas"*. Cuando existan los dos agentes, cada uno
 va a instanciar su propio modelo — ahí se ve cuántos archivos hay que tocar para
 cambiar de modelo, y si conviene volver atrás o centralizar en `src/config.py`.
 
-**Nombres de spans.** `parse_contract_image()` corre dos veces con la misma
-función, pero los spans tienen que llamarse `parse_original_contract` y
-`parse_amendment_contract`. Verificar en la doc de Langfuse cómo se hace.
+**Nombres de spans. — RESUELTO 2026-09-03.**
+`parse_contract_image()` corre dos veces con la misma función, pero los spans
+tienen que llamarse distinto. Solución elegida: dos wrappers de una línea en
+`main.py` (`_step_parse_original` / `_step_parse_amendment`), cada uno decorado
+con `@observe(name=...)`. El nombre del span es responsabilidad del orquestador,
+no del parser: `image_parser.py` no sabe cuál de los dos documentos está
+procesando y no tiene por qué saberlo.
+
+**El span raíz devuelve una tupla y ensucia el output de la traza.**
+`run_contract_analysis()` está anotada `-> ContractChangeOutput` pero devuelve
+`(contract_changes, trace_url)`. Dos consecuencias: (a) el type hint miente y un
+type checker lo marcaría; (b) en Langfuse el output del span raíz se ve como un
+array de dos elementos donde el segundo es la URL de la propia traza —
+autorreferencial y ruidoso justo en el campo que la doc de Langfuse señala como
+el más importante (es el que aparece en la tabla de trazas y el que leen los
+evaluadores). Opción para arreglarlo: sacar el `get_trace_url()` de la función
+decorada y llamarlo desde `main()` dentro de un `with lf_client.start_as_current_observation(...)`,
+o simplemente dejar que `run_contract_analysis` devuelva solo el objeto Pydantic
+y obtener la URL por separado.
+
+**Dependencias muertas en `pyproject.toml`.** `pillow`, `pytesseract` y `dotenv`
+(distinto de `python-dotenv`) no los importa ningún archivo. Decidir si se
+borran antes de la entrega.
 
 ---
 
@@ -231,6 +297,25 @@ y va en `content_blocks=[...]`. El formato `{"type": "image_url", "image_url":
 funciona, pero ata el código al proveedor. Filtro rápido: si el ejemplo dice
 `image_url`, es el camino viejo.
 
-**Pendiente de verificar antes de escribir una línea de Langfuse:** el SDK tuvo
-una reescritura mayor y los imports cambiaron. No escribir nada de Langfuse de
-memoria — traer la doc primero.
+**Langfuse — verificado 2026-09-03 contra el SDK 4.15.1 instalado y la doc**
+✅ https://langfuse.com/integrations/frameworks/langchain (2026-09-03)
+✅ Introspección del paquete instalado (`langfuse/_client/client.py`)
+
+- Imports vigentes: `from langfuse import get_client, observe` y
+  `from langfuse.langchain import CallbackHandler`. El `Langfuse(...)` +
+  `langfuse.trace(...)` de los tutoriales viejos (SDK v2) ya no existe.
+- `client.get_trace_url(trace_id=None)` existe y devuelve la URL de la traza
+  activa. Reemplaza a `api.trace.list(...)`, que era el workaround del v2.
+- **`LANGFUSE_HOST` está deprecado.** El SDK lo sigue leyendo, pero como
+  fallback. Orden real de resolución en `client.py:341-343`:
+  `base_url=` (argumento) → `LANGFUSE_BASE_URL` → `LANGFUSE_HOST` →
+  `https://cloud.langfuse.com` (¡región EU!). Conviene renombrar la variable a
+  `LANGFUSE_BASE_URL` en `.env` y `.env.example` antes de que el fallback
+  desaparezca en una versión futura y las trazas se vayan silenciosamente a EU.
+- El `CallbackHandler` no se configura con credenciales: llama a `get_client()`
+  internamente y se engancha al span de OpenTelemetry que esté activo en ese
+  momento. Por eso los spans de LangChain aparecen anidados bajo el `@observe`
+  correspondiente sin que haya que pasarles ningún parent id.
+- Un único `CallbackHandler()` alcanza para todo el pipeline: mantiene su estado
+  por corrida en un dict indexado por UUID de run. Crear uno por etapa (como
+  hace hoy `main.py`) funciona igual, pero no es necesario.
