@@ -139,6 +139,7 @@ src/models.py      src/image_parser.py    src/main.py
 src/agents/contextualization_agent.py
 src/agents/extraction_agent.py
 data/test_contracts/   6 imágenes = 3 pares + README.md (ground truth)
+docs/prompts/          historial versionado de los 3 system prompts
 ```
 
 **Hecho — pipeline completo de los 5 pasos, corriendo end-to-end:**
@@ -275,6 +276,26 @@ y obtener la URL por separado.
 **Dependencias muertas en `pyproject.toml`.** `pillow`, `pytesseract` y `dotenv`
 (distinto de `python-dotenv`) no los importa ningún archivo. Decidir si se
 borran antes de la entrega.
+
+**OPCIONAL — Ablation del ContextualizationAgent (flag `--no-context-map`).**
+Diferido por decisión mía el 2026-09-10: es un adorno frente a lo que falta.
+
+Qué sería: un flag de `argparse` que saltea al Agente 1 por completo y arma el
+prompt del Agente 2 sin la sección del mapa (omitida entera, no vacía — un
+encabezado anunciando un mapa ausente mide "mapa roto", no "sin mapa").
+Correr los pares 1 y 3, dos repeticiones por brazo, y comparar salida, tokens,
+latencia y costo.
+
+Para qué serviría: hoy la evidencia del handoff es que el mapa **aparece** en el
+prompt del Agente 2 (verificado en Langfuse). Eso prueba transmisión, no
+utilidad. El ablation respondería "¿y si sacás el Agente 1, cambia algo?".
+
+El par 3 es el mejor caso de prueba, no el par 1: su enmienda se titula "VERSIÓN
+ACTUALIZADA" y el Agente 1 tiene que reconocer la correspondencia igual. En el
+par 1 la correspondencia es 1↔1 y cualquier modelo la resuelve solo.
+
+El Agente 1 se queda pase lo que pase: lo exige la consigna. El experimento no
+decide si se borra, decide qué se puede afirmar sobre él en la defensa.
 
 ---
 
