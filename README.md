@@ -85,6 +85,7 @@ src/
 ├── main.py                              entry point, CLI y orquestación
 ├── image_parser.py                      Paso 1
 ├── models.py                            ContractChangeOutput
+├── config.py                            parámetros de los modelos
 └── agents/
     ├── contextualization_agent.py       Agente 1
     └── extraction_agent.py              Agente 2
@@ -102,15 +103,19 @@ Las dependencias entre módulos van **en una sola dirección**:
         ┌──────────────────┼──────────────────┬─────────────┐
         ▼                  ▼                  ▼             ▼
   image_parser.py   contextualization_   extraction_    models.py
-                       agent.py           agent.py          ▲
-                                              │             │
-                                              └─────────────┘
+        │              agent.py            agent.py         ▲
+        │                  │                   │            │
+        └──────────────────┴───────┬───────────┴────────────┘
+                                   ▼
+                              config.py
+                         (constantes, sin lógica)
 ```
 
-`image_parser.py` no importa nada del proyecto. **Los dos agentes no se conocen
-entre sí.** Solo `main.py` conoce a todos, y por eso es el único lugar donde se
-decide el orden de ejecución. Cada módulo tiene su propio bloque
-`if __name__ == "__main__"` y se puede probar aislado.
+**Los dos agentes no se conocen entre sí.** Solo `main.py` conoce a todos, y por
+eso es el único lugar donde se decide el orden de ejecución. `config.py` es una
+hoja sin lógica ni imports: lo consumen los tres módulos que instancian un
+modelo. Cada módulo tiene su propio bloque `if __name__ == "__main__"` y se puede
+probar aislado.
 
 Todo lo que viaja entre etapas es `str`, menos la salida final. Ningún módulo
 intermedio expone tipos de LangChain: `parse_contract_image()` devuelve
@@ -313,6 +318,17 @@ No es estética: si esa función estuviera instrumentada, el output del span ser
 un string base64 de más de 1 MB, guardado en cada corrida. La separación existe
 para que Langfuse solo vea la llamada al modelo.
 
+### Los parámetros del modelo viven en `src/config.py`
+
+`MODEL_NAME`, `MODEL_TEMPERATURE`, `MODEL_TIMEOUT_SECONDS` y `MODEL_MAX_TOKENS`
+estaban repetidos textualmente en las tres llamadas a `init_chat_model()`.
+Cambiar de modelo obligaba a editar tres archivos y a acordarse de los tres.
+
+Las **credenciales no están ahí**, y la distinción es deliberada: `config.py` se
+commitea, así que solo lleva parámetros. `OPENAI_API_KEY` y las claves de
+Langfuse salen del `.env` porque son secretos, y las resuelven LangChain y el SDK
+de Langfuse leyendo `os.environ` por su cuenta — el código nunca las toca.
+
 ### Errores tipados por capa
 
 `main.py` captura cuatro excepciones distintas, de la más específica a la más
@@ -400,8 +416,9 @@ campo con `Literal["addition", "deletion", "modification"]`.
 elimina: corridas idénticas producen redacciones levemente distintas. Lo estable
 es el contenido — las mismas secciones y los mismos valores.
 
-**La configuración del modelo está hardcodeada** en las tres llamadas a
-`init_chat_model()`. Solo la API key sale del entorno.
+**Los parámetros del modelo se cambian editando `src/config.py`.** Están
+centralizados y documentados, pero no son configurables desde afuera: probar otro
+modelo requiere editar el archivo, no pasar un flag ni una variable de entorno.
 
 ---
 
