@@ -1,0 +1,8 @@
+# Normaliza los finales de linea a LF dentro del repo y en el checkout, para que
+# el proyecto se vea igual en Windows y en Linux. Sin esto, git avisa en cada
+# commit que va a convertir LF a CRLF y el diff depende de la maquina.
+* text=auto eol=lf
+
+# Las imagenes de contratos son binarias: git no debe tocarlas.
+*.jpg binary
+*.png binary
