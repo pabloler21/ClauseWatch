@@ -84,7 +84,7 @@ def _step_extraction(
 def run_contract_analysis(
     original_path: str | Path,
     amendment_path: str | Path,
-) -> ContractChangeOutput:
+) -> tuple[ContractChangeOutput, str | None]:
     """Ejecuta el pipeline completo bajo el span raiz 'contract-analysis'.
 
     Args:
@@ -92,19 +92,21 @@ def run_contract_analysis(
         amendment_path: Ruta a la imagen de la adenda/enmienda.
 
     Returns:
-        ContractChangeOutput: Objeto Pydantic validado con los cambios detectados.
+        Una tupla con el objeto Pydantic validado y la URL de la traza en
+        Langfuse (None si el cliente no pudo resolver el project id).
     """
+    # El progreso va a stderr para que stdout quede con el JSON puro y se pueda redirigir.
     # 1. Parsing multimodal de ambos documentos
-    print("[1/3] Parseando imagenes con GPT-4o Vision...")
+    print("[1/3] Parseando imagenes con GPT-4o Vision...", file=sys.stderr)
     original_text = _step_parse_original(original_path)
     amendment_text = _step_parse_amendment(amendment_path)
 
     # 2. Contextualizacion estructural (Agente 1)
-    print("[2/3] Generando mapa contextual con ContextualizationAgent...")
+    print("[2/3] Generando mapa contextual con ContextualizationAgent...", file=sys.stderr)
     contextual_map = _step_contextualization(original_text, amendment_text)
 
     # 3. Extraccion y estructuracion (Agente 2)
-    print("[3/3] Extrayendo cambios con ExtractionAgent...")
+    print("[3/3] Extrayendo cambios con ExtractionAgent...", file=sys.stderr)
     contract_changes = _step_extraction(
         original_text, amendment_text, contextual_map
     )
@@ -140,6 +142,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """Entry point CLI del programa."""
+    # Sin esto, al redirigir la salida en Windows Python usa la codepage de la
+    # consola (cp1252) y el JSON con acentos deja de ser UTF-8 valido.
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
     args = parse_args()
 
     # Inicializa el cliente de Langfuse para verificar conectividad y vaciar el buffer al final.
@@ -166,17 +173,17 @@ def main() -> int:
         # Vacia el buffer de telemetria para garantizar que todos los spans lleguen a Langfuse Cloud.
         lf_client.flush()
 
-    # Muestra el resultado estructurado final por salida estandar en formato JSON legible.
-    print("\n" + "=" * 60)
-    print("REPORTE FINAL DE CAMBIOS (ContractChangeOutput - Pydantic)")
-    print("=" * 60)
+    # Los encabezados son decoracion y van a stderr; el JSON es el resultado y va a stdout.
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("REPORTE FINAL DE CAMBIOS (ContractChangeOutput - Pydantic)", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
     print(json.dumps(results.model_dump(), indent=2, ensure_ascii=False))
 
     # Imprime el link directo a la traza en Langfuse para auditoria y defensa oral.
     if trace_url:
-        print("\n" + "-" * 60)
-        print(f"Trazabilidad Langfuse: {trace_url}")
-        print("-" * 60)
+        print("\n" + "-" * 60, file=sys.stderr)
+        print(f"Trazabilidad Langfuse: {trace_url}", file=sys.stderr)
+        print("-" * 60, file=sys.stderr)
 
     return 0
 
