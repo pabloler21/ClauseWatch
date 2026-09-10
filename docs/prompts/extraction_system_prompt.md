@@ -11,7 +11,8 @@ Su salida se valida contra `ContractChangeOutput` (Pydantic) vía
 | Versión | Fecha | Commit | Estado |
 |---|---|---|---|
 | [v1](#v1) | 2026-09-03 | `bd20aa3` | reemplazada |
-| [v2](#v2) | 2026-09-10 | sin commitear | **viva** |
+| [v2](#v2) | 2026-09-10 | `ddd2b53` | reemplazada |
+| [v3](#v3) | 2026-09-10 | sin commitear | **viva** |
 
 ---
 
@@ -240,7 +241,7 @@ Comparación del GENERATION de `extraction_agent`, par 1, v1 contra v2:
 El prompt más largo se paga solo: la salida estructurada resulta más concisa que
 la prosa de v1. La corrida completa salió marginalmente **más barata** que con v1.
 
-### Pendiente abierto — inconsistencia adición / modificación
+### Fallo detectado — inconsistencia adición / modificación
 
 T9 expuso un problema que v2 no resuelve: la clasificación de texto **agregado
 dentro de una cláusula existente** es inestable entre corridas.
@@ -254,21 +255,112 @@ dentro de una cláusula existente** es inestable entre corridas.
 2 de 3 correctos, mismo tipo de caso. No es un error sistemático: es
 inestabilidad.
 
-**Causa probable:** la dimensión "Additions" dice *"Entirely new clauses **or
+**Causa:** la dimensión "Additions" decía *"Entirely new clauses **or
 provisions**"*. Ese `or provisions` es ambiguo — un método de soporte agregado se
 puede leer como una "provision" nueva. La frontera que el ground truth marca
-explícitamente no está en el prompt.
+explícitamente no estaba en el prompt.
 
-**Fix candidato para v3** (no aplicado, pendiente de decisión):
+→ Resuelto en [v3](#v3).
+
+---
+
+<a name="v3"></a>
+## v3 — 2026-09-10 — sin commitear
+
+### Qué cambió
+
+Una sola línea, la dimensión "Additions":
+
+| | Texto |
+|---|---|
+| **v2** | `2. Additions: Entirely new clauses `**`or provisions`**` introduced in the amendment that were absent in the original.` |
+| **v3** | `2. Additions: Entirely new clauses introduced in the amendment that were absent in the original. `**`Wording added inside a clause that already existed in the original is a modification of that clause, never an addition.`** |
+
+Dos ediciones en una: se elimina el `or provisions` ambiguo y se agrega la regla
+de frontera explícita. El resto del prompt queda idéntico a v2.
+
+### Texto completo
+
+Idéntico a [v2](#v2) salvo la línea 2 de "three dimensions", que pasa a ser:
 
 ```text
-2. Additions: Entirely new clauses introduced in the amendment that were absent
-   in the original. Wording added inside a clause that already existed in the
-   original is a modification of that clause, never an addition.
+2. Additions: Entirely new clauses introduced in the amendment that were absent in the original. Wording added inside a clause that already existed in the original is a modification of that clause, never an addition.
 ```
 
-Este hallazgo es también el argumento medido a favor de agregar un campo
-`changes: list[ClauseChange]` con `change_type: Literal["addition", "deletion",
-"modification"]` a `ContractChangeOutput`: en prosa la clasificación es inestable,
-y un enum obligaría al modelo a elegir explícitamente. Decisión registrada como
-abierta en `CLAUDE.md` §6.
+### Resultado medido
+
+Tres corridas, una por par.
+
+| Par | Traza |
+|---|---|
+| 1 | `01ceeae05e3d4363ecbf6659e9a0c991` |
+| 2 | `af5c7bcfbd66058a430205a5e3ec110e` |
+| 3 | `fd2653e52a837c8567888a5d1e393fee` |
+
+#### El caso objetivo — T9 resuelto
+
+| Caso | Cambio | v2 | **v3** | Ground truth |
+|---|---|---|---|---|
+| Par 1, cl. 4 | email → email y chat | modificación ✅ | **modificación** ✅ | modificación |
+| Par 2, cl. 1 | agrega "y análisis regulatorio" | modificación ✅ | **modificación** ✅ | modificación |
+| Par 3, cl. 5 | email → email y tickets | adición ❌ | **modificación** ✅ | modificación |
+
+**3 de 3.** Par 3: *"5. Soporte: **Modificación** en los métodos de soporte al
+cliente, añadiendo el sistema de tickets en línea al soporte vía correo
+electrónico existente."*
+
+#### No-regresión — las adiciones reales siguen siendo adiciones
+
+El riesgo del fix era sobre-corregir en el otro sentido y empezar a llamar
+"modificación" a cláusulas enteramente nuevas.
+
+| Caso | v3 clasificó | Ground truth |
+|---|---|---|
+| Par 1, cl. 7 (Protección de Datos) | **adición** ✅ | adición |
+| Par 2, cl. 7 (Propiedad Intelectual) | **adición** ✅ | adición |
+
+`sections_changed` sin cambios respecto de v2 en los tres pares: 6/6, 5/5 y 3/3,
+sin las cláusulas idénticas (par 1 cl. 6; par 2 cl. 5 y 6; par 3 cl. 1 y 2).
+
+#### Mejora no buscada — la cláusula 1 del par 1 se abrió en dos entradas
+
+v2 producía una entrada con dos hechos adentro. v3 emite dos entradas separadas,
+cada una con su tipo:
+
+```
+1. Otorgamiento de Licencia: Se eliminó la palabra "intransferible" de la
+   descripción de la licencia, lo que constituye una eliminación.
+1. Otorgamiento de Licencia: Se modificó el uso permitido del software de
+   "fines internos de la empresa" a "operaciones internas de negocio", lo que
+   constituye una modificación.
+```
+
+Es el `Comparison procedure` de v2 funcionando de lleno: una cláusula, dos
+findings, dos tipos distintos. Y `sections_changed` la lista una sola vez, como
+pide la instrucción del campo.
+
+#### Costo
+
+| Métrica | v2 par 1 | v3 par 1 | v2 par 3 | v3 par 3 |
+|---|---|---|---|---|
+| Prompt | 1.756 | 1.804 | 1.388 | 1.406 |
+| Completion | 309 | 327 | 166 | 143 |
+| Costo del agente | $0.007480 | $0.007780 | $0.005130 | $0.004945 |
+| Costo total de la traza | $0.025635 | $0.026195 | $0.018930 | $0.018715 |
+
+El texto agregado al system prompt son ~20 tokens. El delta observado varía
+(+48 en el par 1, +18 en el par 3) porque el user prompt incluye el mapa del
+Agente 1, que cambia de corrida a corrida: el delta medido no es puro.
+
+En completion el efecto va en las dos direcciones: el par 1 sube (+18) porque la
+cláusula 1 ahora produce dos entradas en vez de una, y el par 3 baja (−23) porque
+la redacción quedó más compacta. En plata: ±$0.0003 por corrida, ruido.
+
+### Pendiente abierto
+
+Ninguno derivado de v3. Queda en pie la decisión, ahora sin urgencia, de agregar
+un campo `changes: list[ClauseChange]` con
+`change_type: Literal["addition", "deletion", "modification"]` a
+`ContractChangeOutput`: v3 produce la clasificación correcta 3 de 3, pero sigue
+viviendo en prosa y por lo tanto no es consultable por máquina. Decisión
+registrada como abierta en `CLAUDE.md` §6.

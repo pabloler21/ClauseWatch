@@ -23,7 +23,7 @@ Esta carpeta guarda esa segunda parte. Sirve para tres cosas:
 |---|---|---|---|---|
 | [`transcription_system_prompt.md`](transcription_system_prompt.md) | `TRANSCRIPTION_SYSTEM_PROMPT` | `src/image_parser.py` | 1 — Parsing multimodal | v1 |
 | [`contextualization_system_prompt.md`](contextualization_system_prompt.md) | `CONTEXTUALIZATION_SYSTEM_PROMPT` | `src/agents/contextualization_agent.py` | 2 — Agente 1 | v1 |
-| [`extraction_system_prompt.md`](extraction_system_prompt.md) | `EXTRACTION_SYSTEM_PROMPT` | `src/agents/extraction_agent.py` | 3 — Agente 2 | **v2** |
+| [`extraction_system_prompt.md`](extraction_system_prompt.md) | `EXTRACTION_SYSTEM_PROMPT` | `src/agents/extraction_agent.py` | 3 — Agente 2 | **v3** |
 
 ## Convención para agregar una versión
 
