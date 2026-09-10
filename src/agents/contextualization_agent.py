@@ -5,9 +5,24 @@ construye un mapa de correspondencia estructural entre secciones.
 No extrae ni describe cambios: esa responsabilidad es exclusiva del Agente 2.
 """
 
+import sys
+from pathlib import Path
+
+# Asegura que la raiz del proyecto este en sys.path al ejecutar como script suelto.
+_project_root = str(Path(__file__).resolve().parents[2])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from src.config import (
+    MODEL_MAX_TOKENS,
+    MODEL_NAME,
+    MODEL_TEMPERATURE,
+    MODEL_TIMEOUT_SECONDS,
+)
 
 # Carga variables de entorno para que LangChain resuelva las API keys necesarias.
 load_dotenv()
@@ -60,12 +75,12 @@ def analyze_contract_structure(
     Raises:
         RuntimeError: Si el modelo corto la respuesta por limite de tokens.
     """
-    # Modelo determinista con timeout y limite de tokens para control de costos.
+    # Modelo determinista con timeout y limite de tokens: valores en src/config.py.
     chat_model = init_chat_model(
-        model="openai:gpt-4o",
-        temperature=0,
-        timeout=60,
-        max_tokens=4000,
+        model=MODEL_NAME,
+        temperature=MODEL_TEMPERATURE,
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_tokens=MODEL_MAX_TOKENS,
     )
 
     # Delimita claramente ambos documentos en el mensaje del usuario.
@@ -95,16 +110,10 @@ def analyze_contract_structure(
 
 
 if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    # Permite ejecutar este archivo directamente: `uv run python src/agents/contextualization_agent.py`
-    project_root = Path(__file__).resolve().parents[2]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
+    # sys.path ya quedo resuelto arriba, con el import de src.config.
     from src.image_parser import parse_contract_image
 
+    project_root = Path(_project_root)
     sample_original = project_root / "data" / "test_contracts" / "documento_1_original.jpg"
     sample_amendment = project_root / "data" / "test_contracts" / "documento_1_enmienda.jpg"
 

@@ -19,6 +19,12 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
+from src.config import (
+    MODEL_MAX_TOKENS,
+    MODEL_NAME,
+    MODEL_TEMPERATURE,
+    MODEL_TIMEOUT_SECONDS,
+)
 from src.models import ContractChangeOutput
 
 # Carga variables de entorno para resolver OPENAI_API_KEY.
@@ -81,12 +87,12 @@ def extract_contract_changes(
     Raises:
         RuntimeError: Si la respuesta no pudo validarse segun el esquema esperado.
     """
-    # Modelo base configurado con timeouts y determinismo estricto.
+    # Modelo base con timeouts y determinismo estricto: valores en src/config.py.
     base_model = init_chat_model(
-        model="openai:gpt-4o",
-        temperature=0,
-        timeout=60,
-        max_tokens=4000,
+        model=MODEL_NAME,
+        temperature=MODEL_TEMPERATURE,
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_tokens=MODEL_MAX_TOKENS,
     )
 
     # with_structured_output vincula el JSON Schema de ContractChangeOutput a la API de OpenAI.

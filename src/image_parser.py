@@ -11,11 +11,24 @@ sin duplicar logica.
 
 import base64
 import mimetypes
+import sys
 from pathlib import Path
+
+# Asegura que la raiz del proyecto este en sys.path al ejecutar como script suelto.
+_project_root = str(Path(__file__).resolve().parents[1])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from src.config import (
+    MODEL_MAX_TOKENS,
+    MODEL_NAME,
+    MODEL_TEMPERATURE,
+    MODEL_TIMEOUT_SECONDS,
+)
 
 # Carga el .env en os.environ. LangChain busca OPENAI_API_KEY ahi por su cuenta.
 load_dotenv()
@@ -148,16 +161,12 @@ def parse_contract_image(
 
     # LangChain ya reintenta solo (6 veces, con backoff) ante errores de red,
     # rate limits y 5xx. No reintenta 401 ni 404, que serian inutiles.
+    # Los valores viven en src/config.py: ver ahi el porque de cada uno.
     model = init_chat_model(
-        model="openai:gpt-4o",
-        # Cero = lo mas determinista posible. Una transcripcion no quiere
-        # creatividad: ante la misma imagen, la misma salida.
-        temperature=0,
-        # Segundos antes de abortar. Un contrato tarda entre 5 y 20.
-        timeout=60,
-        # Tope de tokens de salida. Protege el costo, pero puede truncar: ver la
-        # verificacion de finish_reason mas abajo.
-        max_tokens=4000,
+        model=MODEL_NAME,
+        temperature=MODEL_TEMPERATURE,
+        timeout=MODEL_TIMEOUT_SECONDS,
+        max_tokens=MODEL_MAX_TOKENS,
     )
 
     # Mensajes tipados con SystemMessage y HumanMessage. HumanMessage recibe una
@@ -203,11 +212,9 @@ def parse_contract_image(
 # Solo corre con `uv run python src/image_parser.py`. Al importar el modulo
 # desde main.py este bloque no se ejecuta.
 if __name__ == "__main__":
-    # Un path relativo se resuelve contra el directorio desde el que ejecutas,
-    # no contra la ubicacion del .py. Partir de __file__ es estable:
-    #   .parents[0] -> src/     .parents[1] -> raiz del repo
-    project_root = Path(__file__).resolve().parents[1]
-    sample_image = project_root / "data" / "test_contracts" / "documento_1_enmienda.jpg"
+    # Un path relativo se resuelve contra el directorio desde el que ejecutas, no
+    # contra la ubicacion del .py; por eso _project_root parte de __file__.
+    sample_image = Path(_project_root) / "data" / "test_contracts" / "documento_1_enmienda.jpg"
 
     print(f"Transcribiendo: {sample_image.name}\n")
     transcription = parse_contract_image(sample_image)
