@@ -194,9 +194,30 @@ un formato no soportado o una imagen vacía terminan con un mensaje claro en
     "Plazos de rescisión",
     "Protección de datos"
   ],
-  "summary_of_the_change": "1. Otorgamiento de Licencia: Se eliminó la palabra \"intransferible\"…, lo que constituye una eliminación.\n1. Otorgamiento de Licencia: Se modificó el uso permitido del software…, lo que constituye una modificación.\n\n2. Plazo: Se modificó la duración del contrato de 12 meses a 24 meses…"
+  "summary_of_the_change": "1. Otorgamiento de Licencia: Se eliminó la palabra \"intransferible\"…, lo que constituye una eliminación.\n1. Otorgamiento de Licencia: Se modificó el uso permitido del software…\n\n2. Plazo: Se modificó la duración del contrato de 12 meses a 24 meses…",
+  "changes": [
+    {
+      "section": "1. Otorgamiento de Licencia",
+      "change_type": "deletion",
+      "detail": "Se elimina 'e intransferible': la licencia deja de ser intransferible."
+    },
+    {
+      "section": "1. Otorgamiento de Licencia",
+      "change_type": "modification",
+      "detail": "'fines internos de la empresa' → 'operaciones internas de negocio'."
+    },
+    {
+      "section": "2. Plazo",
+      "change_type": "modification",
+      "detail": "La duración pasa de 12 a 24 meses."
+    }
+  ]
 }
 ```
+
+Fijate que la cláusula 1 produce **dos entradas** en `changes`: una eliminación y
+una modificación dentro de la misma cláusula. `sections_changed` la lista una
+sola vez.
 
 Al final se imprime el link directo a la traza en Langfuse.
 
@@ -318,6 +339,42 @@ No es estética: si esa función estuviera instrumentada, el output del span ser
 un string base64 de más de 1 MB, guardado en cada corrida. La separación existe
 para que Langfuse solo vea la llamada al modelo.
 
+### Dos capas de validación: el schema y Pydantic
+
+El Paso 3 pide distinguir adiciones, eliminaciones y modificaciones. Si esa
+distinción vive solo en la prosa de `summary_of_the_change`, un sistema que
+quiera filtrar por tipo tiene que parsear castellano — y el modelo puede escribir
+"se eliminó", "se suprimió" o "desaparece" para la misma cosa.
+
+Por eso `ContractChangeOutput` suma un cuarto campo a los tres que fija la
+consigna:
+
+```python
+change_type: Literal["addition", "deletion", "modification"]
+```
+
+`Literal` se traduce a un `enum` en el JSON Schema, y ahí pasan dos cosas
+distintas: **OpenAI no puede generar un cuarto valor** (la generación está
+restringida, no es que lo intente y falle), y **Pydantic lo valida igual** como
+red de seguridad.
+
+Pero el schema garantiza los tipos de cada campo, **no que dos campos sean
+coherentes entre sí**: nada impide que el modelo liste seis secciones en
+`sections_changed` y detalle cinco en `changes`. Ese hueco lo cubre un
+`@model_validator`:
+
+```python
+@model_validator(mode="after")
+def sections_must_match_changes(self) -> "ContractChangeOutput":
+    if {c.section for c in self.changes} != set(self.sections_changed):
+        raise ValueError("Inconsistencia interna entre los campos de salida…")
+    return self
+```
+
+Sin él, el bloque `except ValidationError` del agente prácticamente nunca se
+ejecutaría, porque structured outputs ya garantiza los tipos. Con él, la
+validación de Pydantic chequea algo que el schema no puede.
+
 ### Los parámetros del modelo viven en `src/config.py`
 
 `MODEL_NAME`, `MODEL_TEMPERATURE`, `MODEL_TIMEOUT_SECONDS` y `MODEL_MAX_TOKENS`
@@ -407,10 +464,10 @@ conservan todas las cláusulas del original; la única eliminación es *interna*
 (`e intransferible`, par 1). La clasificación de eliminaciones se demuestra a
 nivel de texto, no de cláusula completa.
 
-**La clasificación vive en prosa.** `summary_of_the_change` etiqueta cada cambio
-como eliminación, adición o modificación, pero como texto libre. Un sistema que
-quiera filtrar por tipo tendría que parsear castellano. Está evaluado agregar un
-campo con `Literal["addition", "deletion", "modification"]`.
+**`changes` y `summary_of_the_change` dicen lo mismo dos veces.** La misma
+información se emite en prosa y estructurada, lo que cuesta un 80 % más de tokens
+de salida. No se puede eliminar la redundancia porque la consigna fija
+`summary_of_the_change` como campo obligatorio.
 
 **`temperature=0` no es del todo determinista.** Reduce la varianza, no la
 elimina: corridas idénticas producen redacciones levemente distintas. Lo estable
