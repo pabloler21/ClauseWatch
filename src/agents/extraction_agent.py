@@ -57,6 +57,7 @@ Instructions for populating the output fields:
 - `sections_changed`: List the exact section/clause identifiers that experienced any modification, addition, or deletion (e.g., ["1. Otorgamiento de Licencia", "2. Plazo"]). Do NOT include sections that remained completely unchanged. A clause is listed once, however many changes it contains.
 - `topics_touched`: List the distinct legal and commercial domains affected by the changes (e.g., ["Licencia y alcance", "Vigencia del contrato", "Tarifas y pagos", "Soporte técnico", "Plazos de rescisión", "Protección de datos"]).
 - `summary_of_the_change`: Write a comprehensive, objective audit summary in Spanish. Report each individual change separately, quoting the specific values or wording involved (amounts, timeframes, deleted expressions). Group the entries by clause, but a clause holding three changes must produce three statements, not one. State explicitly for each one whether it is a modificación, an adición or an eliminación.
+- `changes`: The same findings as `summary_of_the_change`, one entry per individual change. A clause holding three changes produces three entries sharing the same `section`. The set of `section` values must match `sections_changed` exactly: every clause listed there appears here at least once, and no other clause appears here.
 
 CRITICAL RULES:
 - Ground all findings strictly on the provided texts and structural map. Do not speculate or hallucinate.
