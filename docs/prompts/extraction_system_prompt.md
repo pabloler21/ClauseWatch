@@ -12,7 +12,8 @@ Su salida se valida contra `ContractChangeOutput` (Pydantic) vía
 |---|---|---|---|
 | [v1](#v1) | 2026-09-03 | `bd20aa3` | reemplazada |
 | [v2](#v2) | 2026-09-10 | `ddd2b53` | reemplazada |
-| [v3](#v3) | 2026-09-10 | sin commitear | **viva** |
+| [v3](#v3) | 2026-09-10 | `863eab3` | reemplazada |
+| [v4](#v4) | 2026-09-11 | `8d2183f` | **viva** |
 
 ---
 
@@ -358,9 +359,82 @@ la redacción quedó más compacta. En plata: ±$0.0003 por corrida, ruido.
 
 ### Pendiente abierto
 
-Ninguno derivado de v3. Queda en pie la decisión, ahora sin urgencia, de agregar
-un campo `changes: list[ClauseChange]` con
-`change_type: Literal["addition", "deletion", "modification"]` a
-`ContractChangeOutput`: v3 produce la clasificación correcta 3 de 3, pero sigue
-viviendo en prosa y por lo tanto no es consultable por máquina. Decisión
-registrada como abierta en `CLAUDE.md` §6.
+Ninguno derivado de v3. Queda en pie la decisión de agregar un campo
+`changes: list[ClauseChange]`: v3 produce la clasificación correcta 3 de 3, pero
+sigue viviendo en prosa y por lo tanto no es consultable por máquina.
+
+→ Resuelto en [v4](#v4).
+
+---
+
+<a name="v4"></a>
+## v4 — 2026-09-11 — `8d2183f`
+
+### Qué cambió
+
+Una instrucción nueva en el bloque de campos, por el campo `changes` agregado a
+`ContractChangeOutput`. El resto del prompt es idéntico a v3.
+
+```text
+- `changes`: The same findings as `summary_of_the_change`, one entry per individual change. A clause holding three changes produces three entries sharing the same `section`. The set of `section` values must match `sections_changed` exactly: every clause listed there appears here at least once, and no other clause appears here.
+```
+
+La última frase existe para que el modelo pueda cumplir el `model_validator` de
+`ContractChangeOutput`, que rechaza la salida si `changes` y `sections_changed`
+no cubren el mismo conjunto de cláusulas. Sin esa instrucción el validador
+fallaría seguido y parecería culpa del validador.
+
+### El schema cambió junto con el prompt
+
+Esta versión no se puede evaluar sola: va acompañada de `ClauseChange` en
+`src/models.py`, con `change_type: Literal["addition", "deletion", "modification"]`.
+Las `Field(description=...)` de ese modelo también viajan a la API, así que parte
+de la instrucción vive ahora en el schema y no en el prompt.
+
+### Resultado medido
+
+| Par | Traza | `changes` | Ground truth |
+|---|---|---|---|
+| 1 | `e917f9dbeebb4a732dd79ee562f3f9f1` | 7 entradas: `{deletion: 1, modification: 5, addition: 1}` | 5 mod + 1 adición + 1 eliminación interna ✅ |
+| 2 | — | 5 entradas: `{modification: 4, addition: 1}` | 4 mod + 1 adición ✅ |
+| 3 | — | 3 entradas: `{modification: 3}` | 3 mod, sin adiciones ✅ |
+
+**3 de 3 exacto.** El validador de coherencia pasó en los tres.
+
+El par 1 es el caso que justifica el campo: **7 entradas para 6 secciones**. La
+cláusula 1 aparece dos veces, una como `deletion` y otra como `modification`:
+
+```
+[deletion    ] 1. Otorgamiento de Licencia    ← "e intransferible"
+[modification] 1. Otorgamiento de Licencia    ← "fines internos" → "operaciones internas"
+[modification] 2. Plazo
+[modification] 3. Pago
+[modification] 4. Soporte
+[modification] 5. Terminación
+[addition    ] 7. Protección de Datos
+```
+
+Eso es lo que la prosa de v3 clasificaba bien pero no podía representar como dato.
+
+### Costo — el experimento de tres brazos
+
+Las `Field(description=...)` y el campo `changes` se midieron por separado sobre
+el par 1, en corridas distintas, para poder atribuir cada efecto:
+
+| Brazo | Prompt | Completion | Costo agente | Costo traza |
+|---|---|---|---|---|
+| **A** — v3, sin `Field` | 1.827 | 327 | $0.007838 | $0.023613 |
+| **B** — + `Field(description=...)` | 1.936 | 327 | $0.008110 | $0.026515 |
+| **C** — + `changes` / `Literal` / validador | 2.285 | 590 | $0.011612 | $0.027727 |
+
+- **A → B:** +109 tokens de prompt, completion sin cambios, y **salida idéntica**.
+  Las descriptions no mejoraron nada medible. Se incorporaron igual porque la
+  rúbrica 1.3 las pide explícitamente y el costo es despreciable.
+- **B → C:** +349 de prompt y **+263 de completion (+80 %)**. El agente sube 48 %
+  y la traza completa 17 %. La suba de completion es la **redundancia con
+  `summary_of_the_change`**: la misma información se emite dos veces, en prosa y
+  estructurada. No se puede eliminar porque la consigna fija ese campo.
+
+### Pendiente abierto
+
+Ninguno.
