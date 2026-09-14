@@ -192,11 +192,7 @@ def parse_contract_image(
     config = {"callbacks": callbacks} if callbacks else None
     response = model.invoke(messages, config=config)
 
-    # Truncacion silenciosa: si el modelo choca contra max_tokens no lanza
-    # excepcion, devuelve medio contrato. El agente extractor lo reportaria
-    # despues como "se elimino la clausula 6". Por eso se convierte en error.
-    # PENDIENTE: "finish_reason" es la clave de OpenAI y no esta verificada
-    # contra la doc. Confirmar imprimiendo response.response_metadata.
+    
     if response.response_metadata.get("finish_reason") == "length":
         raise RuntimeError(
             f"La transcripcion de {image_path.name} quedo incompleta: se "
@@ -214,7 +210,7 @@ def parse_contract_image(
 if __name__ == "__main__":
     # Un path relativo se resuelve contra el directorio desde el que ejecutas, no
     # contra la ubicacion del .py; por eso _project_root parte de __file__.
-    sample_image = Path(_project_root) / "data" / "test_contracts" / "documento_1_enmienda.jpg"
+    sample_image = Path(_project_root) / "data" / "test_contracts" / "documento_1_original.jpg"
 
     print(f"Transcribiendo: {sample_image.name}\n")
     transcription = parse_contract_image(sample_image)
