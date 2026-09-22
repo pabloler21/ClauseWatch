@@ -22,7 +22,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from dotenv import load_dotenv
-from langfuse import get_client, observe
+from langfuse import Langfuse, get_client, observe
 from langfuse.langchain import CallbackHandler
 
 from src.agents.contextualization_agent import analyze_contract_structure
@@ -141,6 +141,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _resolve_trace_url(client: Langfuse, trace_id: str) -> str | None:
+    """Construye la URL de una traza sin dejar que un fallo tumbe el reporte.
+
+    `get_trace_url()` consulta la API de Langfuse para resolver el project id,
+    asi que puede fallar por red o por credenciales ausentes. Un problema de
+    telemetria no puede invalidar un analisis que ya se ejecuto y se pago.
+
+    Args:
+        client: Cliente de Langfuse ya inicializado.
+        trace_id: Identificador de la traza cuya URL se quiere construir.
+
+    Returns:
+        La URL de la traza en la UI de Langfuse, o None si no se pudo resolver.
+    """
+    try:
+        return client.get_trace_url(trace_id=trace_id)
+    except Exception as e:
+        # El str() de un error HTTP incluye todos los headers de la respuesta:
+        # ruido inutil en una CLI. Alcanza el tipo y la causa mas probable.
+        print(
+            f"\n[AVISO] No se pudo resolver la URL de la traza ({type(e).__name__}). "
+            f"Revisar las credenciales de Langfuse en el .env. "
+            f"El analisis no se vio afectado.",
+            file=sys.stderr,
+        )
+        return None
+
+
 def main() -> int:
     """Entry point CLI del programa."""
     # Sin esto, al redirigir la salida en Windows Python usa la codepage de la
@@ -185,7 +213,7 @@ def main() -> int:
         lf_client.flush()
 
     # Con el trace id explicito la URL no depende del span activo, que ya cerro.
-    trace_url = lf_client.get_trace_url(trace_id=trace_id)
+    trace_url = _resolve_trace_url(lf_client, trace_id)
 
     # Los encabezados son decoracion y van a stderr; el JSON es el resultado y va a stdout.
     if results is not None:
