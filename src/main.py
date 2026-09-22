@@ -157,6 +157,11 @@ def main() -> int:
     # responsabilidad del orquestador, no del analisis.
     trace_id = lf_client.create_trace_id()
 
+    # Un unico punto de salida: los except marcan el codigo pero no cortan, asi
+    # el link de la traza se imprime tambien cuando el pipeline falla.
+    exit_code = 0
+    results: ContractChangeOutput | None = None
+
     try:
         results = run_contract_analysis(
             args.original_image,
@@ -165,16 +170,16 @@ def main() -> int:
         )
     except FileNotFoundError as e:
         print(f"\n[ERROR DE ARCHIVO] {e}", file=sys.stderr)
-        return 1
+        exit_code = 1
     except ValueError as e:
         print(f"\n[ERROR DE VALIDACION] {e}", file=sys.stderr)
-        return 1
+        exit_code = 1
     except RuntimeError as e:
         print(f"\n[ERROR DE EJECUCION] {e}", file=sys.stderr)
-        return 1
+        exit_code = 1
     except Exception as e:
         print(f"\n[ERROR INESPERADO] {e}", file=sys.stderr)
-        return 1
+        exit_code = 1
     finally:
         # Vacia el buffer de telemetria para garantizar que todos los spans lleguen a Langfuse Cloud.
         lf_client.flush()
@@ -183,18 +188,20 @@ def main() -> int:
     trace_url = lf_client.get_trace_url(trace_id=trace_id)
 
     # Los encabezados son decoracion y van a stderr; el JSON es el resultado y va a stdout.
-    print("\n" + "=" * 60, file=sys.stderr)
-    print("REPORTE FINAL DE CAMBIOS (ContractChangeOutput - Pydantic)", file=sys.stderr)
-    print("=" * 60, file=sys.stderr)
-    print(json.dumps(results.model_dump(), indent=2, ensure_ascii=False))
+    if results is not None:
+        print("\n" + "=" * 60, file=sys.stderr)
+        print("REPORTE FINAL DE CAMBIOS (ContractChangeOutput - Pydantic)", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        print(json.dumps(results.model_dump(), indent=2, ensure_ascii=False))
 
-    # Imprime el link directo a la traza en Langfuse para auditoria y defensa oral.
+    # El link se imprime en las dos salidas: si el pipeline fallo, la traza es
+    # justamente donde se ve en que etapa fallo.
     if trace_url:
         print("\n" + "-" * 60, file=sys.stderr)
         print(f"Trazabilidad Langfuse: {trace_url}", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
 
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":
