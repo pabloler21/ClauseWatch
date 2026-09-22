@@ -84,16 +84,20 @@ def _step_extraction(
 def run_contract_analysis(
     original_path: str | Path,
     amendment_path: str | Path,
-) -> tuple[ContractChangeOutput, str | None]:
+) -> ContractChangeOutput:
     """Ejecuta el pipeline completo bajo el span raiz 'contract-analysis'.
+
+    El trace id de Langfuse lo administra `main()` y se inyecta con el kwarg
+    `langfuse_trace_id`, que @observe consume y nunca llega hasta aca: el
+    pipeline no sabe nada de observabilidad y devuelve solo su resultado.
 
     Args:
         original_path: Ruta a la imagen del contrato original.
         amendment_path: Ruta a la imagen de la adenda/enmienda.
 
     Returns:
-        Una tupla con el objeto Pydantic validado y la URL de la traza en
-        Langfuse (None si el cliente no pudo resolver el project id).
+        El objeto Pydantic validado con los cambios detectados entre ambos
+        documentos.
     """
     # El progreso va a stderr para que stdout quede con el JSON puro y se pueda redirigir.
     # 1. Parsing multimodal de ambos documentos
@@ -111,10 +115,7 @@ def run_contract_analysis(
         original_text, amendment_text, contextual_map
     )
 
-    # Obtiene la URL de la traza activa directamente del contexto de observabilidad.
-    trace_url = get_client().get_trace_url()
-
-    return contract_changes, trace_url
+    return contract_changes
 
 
 # --- Interfaz de linea de comandos (CLI) ------------------------------------
@@ -152,10 +153,15 @@ def main() -> int:
     # Inicializa el cliente de Langfuse para verificar conectividad y vaciar el buffer al final.
     lf_client = get_client()
 
-    trace_url: str | None = None
+    # El trace id se genera aca y se le presta al pipeline. Resolver la URL es
+    # responsabilidad del orquestador, no del analisis.
+    trace_id = lf_client.create_trace_id()
+
     try:
-        results, trace_url = run_contract_analysis(
-            args.original_image, args.amendment_image
+        results = run_contract_analysis(
+            args.original_image,
+            args.amendment_image,
+            langfuse_trace_id=trace_id,
         )
     except FileNotFoundError as e:
         print(f"\n[ERROR DE ARCHIVO] {e}", file=sys.stderr)
@@ -172,6 +178,9 @@ def main() -> int:
     finally:
         # Vacia el buffer de telemetria para garantizar que todos los spans lleguen a Langfuse Cloud.
         lf_client.flush()
+
+    # Con el trace id explicito la URL no depende del span activo, que ya cerro.
+    trace_url = lf_client.get_trace_url(trace_id=trace_id)
 
     # Los encabezados son decoracion y van a stderr; el JSON es el resultado y va a stdout.
     print("\n" + "=" * 60, file=sys.stderr)
