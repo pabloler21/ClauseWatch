@@ -261,17 +261,29 @@ con `@observe(name=...)`. El nombre del span es responsabilidad del orquestador,
 no del parser: `image_parser.py` no sabe cuál de los dos documentos está
 procesando y no tiene por qué saberlo.
 
-**El span raíz devuelve una tupla y ensucia el output de la traza.**
-`run_contract_analysis()` está anotada `-> ContractChangeOutput` pero devuelve
-`(contract_changes, trace_url)`. Dos consecuencias: (a) el type hint miente y un
-type checker lo marcaría; (b) en Langfuse el output del span raíz se ve como un
-array de dos elementos donde el segundo es la URL de la propia traza —
-autorreferencial y ruidoso justo en el campo que la doc de Langfuse señala como
-el más importante (es el que aparece en la tabla de trazas y el que leen los
-evaluadores). Opción para arreglarlo: sacar el `get_trace_url()` de la función
-decorada y llamarlo desde `main()` dentro de un `with lf_client.start_as_current_observation(...)`,
-o simplemente dejar que `run_contract_analysis` devuelva solo el objeto Pydantic
-y obtener la URL por separado.
+**El span raíz devolvía una tupla y ensuciaba el output. — RESUELTO 2026-09-22.**
+`run_contract_analysis()` devolvía `(contract_changes, trace_url)`, y `@observe`
+registra el valor de retorno como output del span
+(✅ verificado en `observe.py:552-553` del SDK 4.15.1 instalado: `span.update(output=result)`).
+El span raíz mostraba entonces un array cuyo segundo elemento era la URL de la
+traza que uno estaba mirando. Además `get_trace_url()` llama a `_get_project_id()`,
+que dispara un GET a la API de Langfuse (✅ `client.py:2428-2437`): al correr
+dentro de la función decorada, ese roundtrip se contaba en la latencia del span.
+
+Solución: `main()` genera el trace id con `create_trace_id()` y se lo presta al
+pipeline con el kwarg `langfuse_trace_id`, que `@observe` documenta en su
+docstring (✅ `observe.py:181`) y consume vía `kwargs.pop()` antes de invocar la
+función — por eso no aparece en la firma de `run_contract_analysis()`. Con el id
+explícito, `get_trace_url(trace_id=...)` no necesita span activo y se resuelve
+desde `main()`, fuera del span.
+
+Por qué no alcanzaba con mover la línea a `main()` sin más: `get_trace_url()` sin
+argumentos lee el span activo del contexto de OpenTelemetry, y `@observe` ya lo
+cerró al retornar. Devuelve `None` con un warning `"Context error: No active span
+in current context"` (✅ reproducido, `client.py:1395-1404`).
+
+Mismo criterio que la decisión de nombres de spans: la observabilidad es
+responsabilidad del orquestador, no del pipeline.
 
 **Dependencias muertas en `pyproject.toml`.** `pillow`, `pytesseract` y `dotenv`
 (distinto de `python-dotenv`) no los importa ningún archivo. Decidir si se
