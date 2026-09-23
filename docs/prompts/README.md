@@ -1,6 +1,6 @@
 # Historial de prompts — ClauseWatch
 
-Un archivo por cada system prompt del pipeline. Cada archivo guarda **todas** las
+Un archivo por cada system prompt del pipeline (cuatro). Cada archivo guarda **todas** las
 versiones que ese prompt tuvo, en orden cronológico, con el texto completo de cada
 una y el motivo del cambio.
 
@@ -24,6 +24,7 @@ Esta carpeta guarda esa segunda parte. Sirve para tres cosas:
 | [`transcription_system_prompt.md`](transcription_system_prompt.md) | `TRANSCRIPTION_SYSTEM_PROMPT` | `transcription_system_prompt.txt` | `src/image_parser.py` | 1 — Parsing multimodal | v1 |
 | [`contextualization_system_prompt.md`](contextualization_system_prompt.md) | `CONTEXTUALIZATION_SYSTEM_PROMPT` | `contextualization_system_prompt.txt` | `src/agents/contextualization_agent.py` | 2 — Agente 1 | v1 |
 | [`extraction_system_prompt.md`](extraction_system_prompt.md) | `EXTRACTION_SYSTEM_PROMPT` | `extraction_system_prompt.txt` | `src/agents/extraction_agent.py` | 3 — Agente 2 | **v4** |
+| [`document_match_system_prompt.md`](document_match_system_prompt.md) | `DOCUMENT_MATCH_SYSTEM_PROMPT` | `document_match_system_prompt.txt` | `src/document_match.py` | entre 1 y 2 — chequeo de correspondencia | v1 |
 
 ## Convención para agregar una versión
 
