@@ -130,52 +130,72 @@ extrae qué cláusulas cambiaron. Salida: **JSON validado con Pydantic**, con
 
 ---
 
-## 4. Estado real del repo — verificado 2026-09-03
+## 4. Estado real del repo — verificado 2026-09-23
 
 ```
 CLAUDE.md          consigna.md        pyproject.toml     uv.lock
-.env (ignorado)    .env.example       .gitignore         README.md (VACÍO, 0 bytes)
-src/models.py      src/image_parser.py    src/main.py
+requirements.txt   .env (ignorado)    .env.example       .gitignore
+.gitattributes     .python-version    README.md (~20 KB, completo)
+src/config.py      src/models.py      src/image_parser.py    src/main.py
 src/agents/contextualization_agent.py
 src/agents/extraction_agent.py
 data/test_contracts/   6 imágenes = 3 pares + README.md (ground truth)
-docs/prompts/          historial versionado de los 3 system prompts
+docs/prompts/          historial versionado de los 3 system prompts + README
 ```
 
 **Hecho — pipeline completo de los 5 pasos, corriendo end-to-end:**
-- `src/models.py` — `ContractChangeOutput` con los 3 campos y docstring de clase.
-  Sin `Field(description=...)`. Ver §6.
+- `src/config.py` — `MODEL_NAME`, `MODEL_TEMPERATURE`, `MODEL_TIMEOUT_SECONDS`
+  (60), `MODEL_MAX_TOKENS` (4000). Lo importan los tres módulos que llaman a
+  `init_chat_model()`. Sin credenciales.
+- `src/models.py` — `ClauseChange` (`section`, `change_type:
+  Literal["addition","deletion","modification"]`, `detail`) y
+  `ContractChangeOutput` con los 3 campos de la consigna **más** `changes:
+  list[ClauseChange]`. Todos con `Field(description=...)`. `@model_validator`
+  `sections_must_match_changes` exige que las secciones de `changes` coincidan
+  con `sections_changed`.
 - `src/image_parser.py` — Paso 1. `validate_image_file()` +
   `encode_image_to_base64()` + `parse_contract_image()`. Bloques multimodales
-  estándar (`{"type": "image", "base64": ..., "mime_type": ...}`), timeout 60 s,
-  `max_tokens=4000`, guardia contra truncamiento por `finish_reason == "length"`.
-- `src/agents/contextualization_agent.py` — Paso 2. Agente 1, rol "Senior Legal
-  Contract Analyst". Devuelve Markdown, no JSON. Regla negativa explícita que le
-  prohíbe extraer cambios.
-- `src/agents/extraction_agent.py` — Paso 3 + 4. Agente 2, rol "Senior Legal
-  Compliance Auditor". Usa `with_structured_output(ContractChangeOutput)`.
-- `src/main.py` — Paso 5. CLI con `argparse`, span raíz `contract-analysis` y
-  cuatro hijos vía `@observe`, `CallbackHandler` de LangChain por etapa,
-  `flush()` en `finally`, imprime JSON + URL de la traza.
-- 3 pares de contratos de prueba en `data/test_contracts/` (la consigna pide
-  mínimo 2), nombrados `documento_N_original.jpg` / `documento_N_enmienda.jpg`
-  — el número del par va primero para que al ordenar queden los pares juntos.
-  Su `README.md` es el ground truth.
-- Entorno: `uv` + `pyproject.toml`. Instalado: `langchain 1.3.18`,
-  `langchain-core 1.6.1`, `langchain-openai 1.6.0`, `openai 3.7.0`,
-  `pydantic 2.13.5`, `python-dotenv 1.2.3`, `langfuse 4.15.1`.
-- `.env` creado y gitignoreado. `.env.example` como template.
+  estándar, guardia contra truncamiento por `finish_reason == "length"`.
+- `src/agents/contextualization_agent.py` — Paso 2. `analyze_contract_structure()`,
+  rol "Senior Legal Contract Analyst". Devuelve Markdown. Regla negativa que le
+  prohíbe extraer cambios. Prompt v1.
+- `src/agents/extraction_agent.py` — Paso 3 + 4. `extract_contract_changes()`,
+  rol "Senior Legal Compliance Auditor". `with_structured_output(ContractChangeOutput)`,
+  `ValidationError` → `RuntimeError`. Prompt **v4**.
+- `src/main.py` — Paso 5. CLI `argparse`, span raíz `contract-analysis` con
+  cuatro hijos `@observe`, un `CallbackHandler` por etapa. `main()` genera el
+  trace id y resuelve la URL fuera del span (`_resolve_trace_url`, tolerante a
+  fallos). JSON a stdout, progreso/errores/link a stderr, stdout forzado a UTF-8,
+  exit code 1 ante error.
+- `README.md` — completo: arquitectura con Mermaid, grafo de dependencias,
+  setup, uso, salida de ejemplo, observabilidad, decisiones técnicas, validación
+  contra ground truth (v1→v3 del prompt), limitaciones.
+- `docs/prompts/` — historial versionado. Viva: transcripción v1,
+  contextualización v1, extracción v4 (3/3 pares exactos contra ground truth).
+- Entorno: `uv` + `pyproject.toml` (5 dependencias directas, sin muertas).
+  Instalado: `langchain 1.3.18`, `langchain-core 1.6.1`, `langchain-openai 1.6.0`,
+  `openai 3.7.0`, `pydantic 2.13.5`, `python-dotenv 1.2.3`, `langfuse 4.15.1`.
+  `.env` y `.env.example` usan `LANGFUSE_BASE_URL`.
 
-**Falta:**
-- `README.md` de la raíz: está **vacío (0 bytes)**. Es el entregable de la
-  rúbrica 4.1 (10 pts) y hoy vale 0.
-- Limpiar dependencias muertas de `pyproject.toml`: `pillow` y `pytesseract`
-  quedaron de una idea de OCR local que se descartó, y `dotenv` (0.9.9) es un
-  paquete distinto y redundante con `python-dotenv`. Un evaluador que lea el
-  `pyproject.toml` va a preguntar por qué hay un OCR instalado en un proyecto
-  que usa GPT-4o Vision.
+**Inconsistencias menores detectadas en la revisión del 2026-09-23** (sin corregir):
+- `src/config.py:24-25` dice que *cada* módulo verifica `finish_reason ==
+  "length"`, pero `extraction_agent.py` no lo hace. Un truncamiento ahí llega
+  como error de validación de Pydantic, con un mensaje que no dice la causa real.
+- Los mensajes de truncamiento (`image_parser.py:200`,
+  `contextualization_agent.py:106`) dicen "Aumentar max_tokens en
+  init_chat_model()": desde `1e2c076` el valor vive en `MODEL_MAX_TOKENS` de
+  `src/config.py`.
+- `extraction_agent.py:84-86`: el `Returns` del docstring no menciona `changes`.
+- `extraction_agent.py:124-126`: el `model_validate()` de respaldo está fuera del
+  `try`; si fallara, su `ValidationError` (subclase de `ValueError`) caería en
+  `main.py` como `[ERROR DE VALIDACION]`, el mensaje pensado para imágenes.
+- `main.py`: `parse_args()` y `main()` no tienen `Returns` en el docstring
+  (regla 6).
+- README "Chains (LCEL) en vez de `create_agent`": el Agente 1 no usa LCEL, es un
+  `chat_model.invoke()` directo; solo el Agente 2 es una cadena (la que arma
+  `with_structured_output`). La justificación vale, el nombre no.
 
-### Traza de referencia verificada en Langfuse — 2026-09-03
+### Traza de referencia verificada en Langfuse — 2026-09-03 (prompts v1)
 
 Jerarquía real observada en Langfuse Cloud US (par 1), corrida de 27,14 s:
 
@@ -192,6 +212,11 @@ contract-analysis            27.14s   $0.026147   Σ 6.343 tokens
         ├── ChatOpenAI        4.62s   1.545 → 349    (GENERATION)
         └── RunnableLambda                           (parser Pydantic)
 ```
+
+Con el prompt v4 y el campo `changes`, el costo total medido sobre el par 1 es
+**$0.027727** por corrida, y el agente de extracción sube a 2.285 → 590 tokens,
+$0.011612 (brazo C, `docs/prompts/extraction_system_prompt.md`). Con esos
+números, el parsing es ~43 % del costo y los dos agentes ~57 %.
 
 Cubre la rúbrica 3.1 nivel excelente: traza padre, jerarquía real (no plana),
 inputs/outputs por span, latencia, tokens y costo por generación.
@@ -210,84 +235,87 @@ Resumen: par 1 = 5 modificaciones + 1 adición + 1 sin cambios. Par 2 = 4
 modificaciones + 1 adición + 2 sin cambios. Par 3 = 3 modificaciones + 2 sin
 cambios.
 
-**Limitación conocida del set: ningún par elimina una cláusula entera.** Los
-tres documentos enmendados conservan todas las cláusulas del original. La única
-eliminación es interna (par 1, cláusula 1: desaparece "e intransferible"). El
-Paso 3 pide distinguir adiciones, eliminaciones y modificaciones — con este set
-la eliminación solo se demuestra a nivel de texto, no de cláusula. Decidir si se
-agrega un par 4 o si se justifica la limitación en la defensa.
+Partes de cada par (relevante para cualquier chequeo de correspondencia):
+par 1 TechNova / DataBridge, par 2 Orion / GreenWave, par 3 CloudMetrics /
+RetailPulse. Los tres pares tienen partes y objeto distintos entre sí.
+
+**Limitación conocida del set: ningún par elimina una cláusula entera.** La
+única eliminación es interna (par 1, cláusula 1: desaparece "e intransferible").
+Documentada como limitación en el README. Sigue sin decidirse si se agrega un
+par 4.
 
 ---
 
 ## 5. Decisiones que ya tomé yo
 
-**`requirements.txt` descartado.** El profesor confirmó que `uv` +
-`pyproject.toml` + `uv.lock` cumple el requisito de versiones fijadas. La
-consigna lo pide igual; justificar el reemplazo en el README.
+**`uv` + `uv.lock` como fuente de verdad, `requirements.txt` derivado.** El
+profesor confirmó que `uv` + `pyproject.toml` + `uv.lock` cumple el requisito de
+versiones fijadas. Igual se agregó un `requirements.txt` generado con
+`uv export` (`2d7dad4`); el README explica que es derivado, no la fuente.
 
 **`main.py` de la raíz borrado** — era el placeholder de `uv init`. El entry
 point va en `src/main.py`.
+
+**`Field(description=...)` incorporadas (`f0c77f4`).** Se midió con y sin sobre
+el par 1: salida idéntica, +109 tokens de prompt. Se incorporaron igual porque la
+rúbrica 1.3 las pide. El README dice que no mejoran la salida.
+
+**Campo `changes` + `Literal` + `model_validator` (`8d2183f`).** Cuarto campo por
+encima de los tres de la consigna, para que el tipo de cambio sea consultable por
+código. Costo conocido: +80 % de tokens de completion en el agente por la
+redundancia con `summary_of_the_change` (documentado como limitación).
+
+**Configuración del modelo centralizada en `src/config.py` (`1e2c076`).**
+Constantes con nombre, no variables de entorno. Riesgo residual con la rúbrica
+2.2: no es configurable desde afuera sin editar el archivo; el README lo declara
+como limitación.
+
+**Chains en vez de `create_agent`.** Ninguno de los dos agentes tiene tools;
+justificado en el README.
+
+**Dependencias muertas eliminadas (`28b49d1`)** — `pillow`, `pytesseract` y
+`dotenv`. **`LANGFUSE_HOST` renombrado a `LANGFUSE_BASE_URL` (`83d204d`).**
+
+**Nombres de spans** — dos wrappers en `main.py` con `@observe(name=...)`. El
+nombre del span es responsabilidad del orquestador, no del parser.
+
+**Span raíz devuelve solo `ContractChangeOutput` (`20fed01`, 2026-09-22).**
+`@observe` registra el valor de retorno como output del span
+(✅ `observe.py:552-553` del SDK 4.15.1: `span.update(output=result)`); devolver
+la tupla `(resultado, url)` ensuciaba el span, y `get_trace_url()` hace un GET a
+la API (✅ `client.py:2428-2437`) que se contaba en la latencia. `main()` genera
+el id con `create_trace_id()` y lo pasa con el kwarg `langfuse_trace_id`
+(✅ `observe.py:181`, consumido vía `kwargs.pop()`), y resuelve la URL fuera del
+span. Sin id explícito, `get_trace_url()` después de cerrar el span devuelve
+`None` con `"Context error: No active span in current context"`
+(✅ reproducido, `client.py:1395-1404`).
+
+**El link de la traza se imprime también cuando el pipeline falla (`4e8ba33`)**
+y **un fallo de telemetría no tumba el reporte (`8564899`).**
 
 ---
 
 ## 6. Abierto — resolver con evidencia, no discutiendo
 
-**`ContractChangeOutput` sin `Field(description=...)`.**
-Decidí sacar las descriptions y mover las instrucciones de formato al system
-prompt del `ExtractionAgent`. Riesgo conocido: la rúbrica 1.3 baja a
-satisfactorio si *"faltan descripciones de campo"*.
-Se resuelve empíricamente: correr el pipeline con y sin descriptions contra el
-par 1 y comparar contra el ground truth de §4. Si el modelo normaliza la
-numeración o inventa un cambio en la cláusula 6, vuelven los `Field`.
-Esa comparación es material directo para el README.
+**Chequeo de correspondencia entre documentos — propuesta en evaluación, NO
+decidida (2026-09-23).**
+Problema: si se pasan el original de un contrato y la enmienda de otro, el
+pipeline los compara igual y devuelve cambios inventados en un JSON válido.
+Propuesta inicial (descartada en la revisión): OCR local con Tesseract + Jev
+(TypeSafe) antes del parsing. Objeciones: reintroduce la dependencia de OCR
+recién eliminada, suma un proveedor fuera del stack obligatorio, decide con el
+texto de menor calidad, y la pregunta "¿mismas partes?" rechazaría enmiendas
+legítimas que cambian una parte (cesión, cambio de razón social).
+Alternativa sobre la mesa: un chequeo entre el parsing y los agentes, sobre el
+texto de GPT-4o, con salida estructurada Pydantic y su propio span. Validación
+necesaria: las 6 combinaciones cruzadas del set + un negativo difícil (mismas
+partes, otro contrato) + un positivo difícil (enmienda que cambia una parte).
 
-**Chains (LCEL) vs `create_agent` para los dos agentes.** Ninguno de los dos
-agentes tiene tools. Decidir y justificar en el README.
+**Configurabilidad del modelo por entorno.** Ver §5: hoy se edita
+`src/config.py`. Decidir si se leen overrides desde `.env` para cerrar el
+riesgo de la rúbrica 2.2 o si se defiende la decisión tal cual.
 
-**Config del modelo hardcodeada en la llamada.** Decidí definir `"openai:gpt-4o"`,
-`temperature`, `timeout` y `max_tokens` como literales dentro de
-`init_chat_model()`, en vez de leerlos del `.env`. La API key sí sale de `.env`
-(LangChain la toma sola de `os.environ`).
-Riesgo conocido: la rúbrica 2.2 baja a satisfactorio con *"algunas claves o
-configuraciones están hardcodeadas"*. Cuando existan los dos agentes, cada uno
-va a instanciar su propio modelo — ahí se ve cuántos archivos hay que tocar para
-cambiar de modelo, y si conviene volver atrás o centralizar en `src/config.py`.
-
-**Nombres de spans. — RESUELTO 2026-09-03.**
-`parse_contract_image()` corre dos veces con la misma función, pero los spans
-tienen que llamarse distinto. Solución elegida: dos wrappers de una línea en
-`main.py` (`_step_parse_original` / `_step_parse_amendment`), cada uno decorado
-con `@observe(name=...)`. El nombre del span es responsabilidad del orquestador,
-no del parser: `image_parser.py` no sabe cuál de los dos documentos está
-procesando y no tiene por qué saberlo.
-
-**El span raíz devolvía una tupla y ensuciaba el output. — RESUELTO 2026-09-22.**
-`run_contract_analysis()` devolvía `(contract_changes, trace_url)`, y `@observe`
-registra el valor de retorno como output del span
-(✅ verificado en `observe.py:552-553` del SDK 4.15.1 instalado: `span.update(output=result)`).
-El span raíz mostraba entonces un array cuyo segundo elemento era la URL de la
-traza que uno estaba mirando. Además `get_trace_url()` llama a `_get_project_id()`,
-que dispara un GET a la API de Langfuse (✅ `client.py:2428-2437`): al correr
-dentro de la función decorada, ese roundtrip se contaba en la latencia del span.
-
-Solución: `main()` genera el trace id con `create_trace_id()` y se lo presta al
-pipeline con el kwarg `langfuse_trace_id`, que `@observe` documenta en su
-docstring (✅ `observe.py:181`) y consume vía `kwargs.pop()` antes de invocar la
-función — por eso no aparece en la firma de `run_contract_analysis()`. Con el id
-explícito, `get_trace_url(trace_id=...)` no necesita span activo y se resuelve
-desde `main()`, fuera del span.
-
-Por qué no alcanzaba con mover la línea a `main()` sin más: `get_trace_url()` sin
-argumentos lee el span activo del contexto de OpenTelemetry, y `@observe` ya lo
-cerró al retornar. Devuelve `None` con un warning `"Context error: No active span
-in current context"` (✅ reproducido, `client.py:1395-1404`).
-
-Mismo criterio que la decisión de nombres de spans: la observabilidad es
-responsabilidad del orquestador, no del pipeline.
-
-**Dependencias muertas en `pyproject.toml`.** `pillow`, `pytesseract` y `dotenv`
-(distinto de `python-dotenv`) no los importa ningún archivo. Decidir si se
-borran antes de la entrega.
+**Par 4 con eliminación de cláusula entera.** Ver §4, ground truth.
 
 **OPCIONAL — Ablation del ContextualizationAgent (flag `--no-context-map`).**
 Diferido por decisión mía el 2026-09-10: es un adorno frente a lo que falta.
@@ -342,9 +370,9 @@ funciona, pero ata el código al proveedor. Filtro rápido: si el ejemplo dice
 - **`LANGFUSE_HOST` está deprecado.** El SDK lo sigue leyendo, pero como
   fallback. Orden real de resolución en `client.py:341-343`:
   `base_url=` (argumento) → `LANGFUSE_BASE_URL` → `LANGFUSE_HOST` →
-  `https://cloud.langfuse.com` (¡región EU!). Conviene renombrar la variable a
-  `LANGFUSE_BASE_URL` en `.env` y `.env.example` antes de que el fallback
-  desaparezca en una versión futura y las trazas se vayan silenciosamente a EU.
+  `https://cloud.langfuse.com` (¡región EU!). Ya renombrada a
+  `LANGFUSE_BASE_URL` en `.env` y `.env.example` (`83d204d`): si el fallback
+  desaparece en una versión futura, las trazas no se van silenciosamente a EU.
 - El `CallbackHandler` no se configura con credenciales: llama a `get_client()`
   internamente y se engancha al span de OpenTelemetry que esté activo en ese
   momento. Por eso los spans de LangChain aparecen anidados bajo el `@observe`
