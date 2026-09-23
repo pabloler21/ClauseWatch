@@ -22,5 +22,5 @@ MODEL_TEMPERATURE: float = 0
 MODEL_TIMEOUT_SECONDS: int = 60
 
 # Tope de tokens de salida por llamada. Protege el costo, pero puede truncar: por
-# eso cada modulo verifica finish_reason == "length" despues de invocar.
+# eso cada modulo convierte el truncamiento en un RuntimeError explicito.
 MODEL_MAX_TOKENS: int = 4000

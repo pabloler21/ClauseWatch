@@ -81,7 +81,7 @@ def analyze_contract_structure(
     if response.response_metadata.get("finish_reason") == "length":
         raise RuntimeError(
             "El analisis de estructura quedo incompleto: se alcanzo el limite de tokens de salida. "
-            "Aumentar max_tokens en init_chat_model() y volver a ejecutar."
+            "Aumentar MODEL_MAX_TOKENS en src/config.py y volver a ejecutar."
         )
 
     return response.text

@@ -185,7 +185,7 @@ def parse_contract_image(
         raise RuntimeError(
             f"La transcripcion de {image_path.name} quedo incompleta: se "
             f"alcanzo el limite de tokens de salida. "
-            f"Aumentar max_tokens en init_chat_model() y volver a ejecutar."
+            f"Aumentar MODEL_MAX_TOKENS en src/config.py y volver a ejecutar."
         )
 
     # Devuelve str puro: ningun otro modulo necesita saber que se uso LangChain.
