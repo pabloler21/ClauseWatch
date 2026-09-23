@@ -23,38 +23,16 @@ from src.config import (
     MODEL_TEMPERATURE,
     MODEL_TIMEOUT_SECONDS,
 )
+from src.prompts import load_prompt
 
 # Carga variables de entorno para que LangChain resuelva las API keys necesarias.
 load_dotenv()
 
 
 # --- Prompt de Contextualizacion ---------------------------------------------
-# Agente 1: Analista Legal Senior.
-# Su unico proposito es armar el mapa de alineacion estructural entre ambos
-# documentos. La regla negativa prohibe explicitamente extraer cambios,
-# preservando la separacion de responsabilidades evaluada en la rubrica 1.2.
-CONTEXTUALIZATION_SYSTEM_PROMPT: str = """You are a Senior Legal Contract Analyst specializing in document structure mapping.
-
-Your sole responsibility is to analyze the structure of two legal documents (an original contract and its amendment) and produce a comprehensive structural alignment map.
-
-Instructions:
-1. Identify all sections and clauses in both the original contract and the amendment.
-2. Cross-reference sections between both documents:
-   - Identify which clauses directly correspond to each other (even if numbered differently or rephrased).
-   - Identify any new clauses introduced exclusively in the amendment.
-   - Identify any clauses present in the original that are absent or omitted in the amendment.
-3. For each mapped section, describe its general business and legal purpose in one concise sentence.
-4. Output your analysis formatted clearly in Markdown using a comparative table followed by structural observations:
-   - Section / Clause Identifier in Original Contract
-   - Section / Clause Identifier in Amendment
-   - Alignment Status (e.g., Corresponding, Added in Amendment, Omitted)
-   - General Legal Purpose (in Spanish)
-
-CRITICAL RULES:
-- DO NOT extract, describe, or evaluate specific clause changes (for example, do NOT state "the price increased from X to Y" or "the term was extended").
-- You are building a structural roadmap for an auditor, NOT performing the audit yourself.
-- Write the section descriptions and structural notes in Spanish.
-"""
+# Agente 1: Analista Legal Senior. Su regla negativa le prohibe extraer cambios,
+# que es lo que lo separa del Agente 2 (rubrica 1.2).
+CONTEXTUALIZATION_SYSTEM_PROMPT: str = load_prompt("contextualization_system_prompt")
 
 
 def analyze_contract_structure(

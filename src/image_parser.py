@@ -29,6 +29,7 @@ from src.config import (
     MODEL_TEMPERATURE,
     MODEL_TIMEOUT_SECONDS,
 )
+from src.prompts import load_prompt
 
 # Carga el .env en os.environ. LangChain busca OPENAI_API_KEY ahi por su cuenta.
 load_dotenv()
@@ -43,22 +44,9 @@ MAX_IMAGE_SIZE_BYTES: int = int(MAX_IMAGE_SIZE_MB * 1024 * 1024)
 
 # --- Prompt de transcripcion -----------------------------------------------
 # GPT-4o no es un OCR: razona sobre la imagen, y por eso respeta la jerarquia
-# del documento. Pero como razona, tambien puede resumir, corregir o
-# reformular. Cada regla de abajo neutraliza uno de esos modos de falla.
-TRANSCRIPTION_SYSTEM_PROMPT: str = """You are a document transcription engine.
-Transcribe the contract shown in the image exactly as it is written.
-
-Rules:
-- Reproduce the text verbatim. Do not summarize, rephrase, translate or explain.
-- Keep the original clause numbering and headings on their own line, exactly as
-  they appear in the document (for example: "3. Pago").
-- Keep every number, amount, percentage and date in its original notation.
-  Do not convert "USD 12.000" into "$12,000".
-- Do not fix typos, spelling or grammar. An error in the source document is part
-  of the source document.
-- Preserve the blank line that separates one clause from the next.
-- Output only the transcription. No preamble, no commentary, no closing remarks.
-"""
+# del documento, pero tambien puede resumir o corregir. Las reglas que lo evitan
+# estan en src/prompts/transcription_system_prompt.txt.
+TRANSCRIPTION_SYSTEM_PROMPT: str = load_prompt("transcription_system_prompt")
 
 
 # --- Funciones -------------------------------------------------------------
