@@ -21,6 +21,7 @@ ningún modelo.
 | 1 | `documento_1_original.jpg` / `documento_1_enmienda.jpg` | Licencia de software (TechNova / DataBridge) | 6 → 7 |
 | 2 | `documento_2_original.jpg` / `documento_2_enmienda.jpg` | Servicios de consultoría (Orion / GreenWave) | 6 → 7 |
 | 3 | `documento_3_original.jpg` / `documento_3_enmienda.jpg` | Servicio SaaS (CloudMetrics / RetailPulse) | 5 → 5 |
+| — | `documento_4_original.jpg`, `documento_1_enmienda_cesion.jpg` | Solo para el chequeo de correspondencia (ver abajo) | — |
 
 Los tres usan numeración `N. Título`. Las tipografías difieren entre pares
 (pares 1 y 2 en sans serif, par 3 en serif), lo que da algo de variedad para
@@ -109,6 +110,44 @@ Casos interesantes de este par:
   aparece acá.
 - Ninguna cláusula nueva. Sirve como control de que el sistema no inventa
   adiciones.
+
+---
+
+## Casos de correspondencia
+
+El pipeline verifica, antes de correr los agentes, que las dos imágenes sean el
+mismo contrato (`src/document_match.py`). Si no lo son, cualquier "cambio" que
+reportara el Agente 2 sería inventado. Estos casos prueban ese chequeo, y la
+tabla de veredictos esperados se escribió **antes** de correr ningún modelo.
+
+Dos imágenes existen solo para este chequeo (no tienen tabla de cambios):
+
+| Archivo | Qué es | Por qué existe |
+|---|---|---|
+| `documento_4_original.jpg` | Acuerdo de Confidencialidad entre **las mismas partes del par 1** (TechNova / DataBridge), 15 de enero de 2024 | **Negativo difícil.** Un filtro que solo mira las partes lo dejaría pasar como enmienda del par 1 |
+| `documento_1_enmienda_cesion.jpg` | Enmienda N.º 2 del par 1, donde DataBridge cedió su posición a **Nexa Data Systems S.A.** | **Positivo difícil.** Cambia una parte y sigue siendo el mismo contrato. Un filtro "¿mismas partes?" lo rechazaría |
+
+Las dos se generaron con un script de Pillow fuera del repo, imitando el formato
+de los pares 1 a 3 (1242×1755 px, Arial).
+
+### Veredictos esperados — 11 casos
+
+| # | Original | Segundo documento | Esperado | Por qué |
+|---|---|---|---|---|
+| 1 | `documento_1_original` | `documento_1_enmienda` | ✅ mismo contrato | par válido |
+| 2 | `documento_2_original` | `documento_2_enmienda` | ✅ mismo contrato | par válido |
+| 3 | `documento_3_original` | `documento_3_enmienda` | ✅ mismo contrato | par válido; la enmienda se titula "VERSIÓN ACTUALIZADA" |
+| 4 | `documento_1_original` | `documento_2_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 5 | `documento_1_original` | `documento_3_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 6 | `documento_2_original` | `documento_1_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 7 | `documento_2_original` | `documento_3_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 8 | `documento_3_original` | `documento_1_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 9 | `documento_3_original` | `documento_2_enmienda` | ❌ distinto | otras partes, otro objeto |
+| 10 | `documento_4_original` | `documento_1_enmienda` | ❌ distinto | **mismas partes**, otro contrato (la enmienda cita un contrato de licencia del 1 de marzo, no un NDA del 15 de enero) |
+| 11 | `documento_1_original` | `documento_1_enmienda_cesion` | ✅ mismo contrato | **cambia una parte** por cesión, pero cita el mismo contrato y fecha |
+
+Los casos 4 a 9 son fáciles: cualquier chequeo razonable los resuelve. Los que
+prueban el diseño son el 10 y el 11.
 
 ---
 
