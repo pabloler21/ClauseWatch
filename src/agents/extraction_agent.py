@@ -17,6 +17,7 @@ if _project_root not in sys.path:
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
+from openai import LengthFinishReasonError
 from pydantic import ValidationError
 
 from src.config import (
@@ -54,10 +55,12 @@ def extract_contract_changes(
 
     Returns:
         ContractChangeOutput: Objeto Pydantic validado con las secciones
-            modificadas, temas afectados y resumen detallado.
+            modificadas, los temas afectados, el resumen y la lista `changes`
+            con cada cambio clasificado.
 
     Raises:
-        RuntimeError: Si la respuesta no pudo validarse segun el esquema esperado.
+        RuntimeError: Si el modelo corto la respuesta por limite de tokens, o si
+            la respuesta no pudo validarse segun `ContractChangeOutput`.
     """
     # Modelo base con timeouts y determinismo estricto: valores en src/config.py.
     base_model = init_chat_model(
@@ -87,14 +90,23 @@ def extract_contract_changes(
     config = {"callbacks": callbacks} if callbacks else None
     try:
         result = structured_model.invoke(messages, config=config)
+
+        # Respaldo por si el provider devolviera un dict: dentro del try para que
+        # su ValidationError tenga el mismo tratamiento que el de invoke().
+        if not isinstance(result, ContractChangeOutput):
+            result = ContractChangeOutput.model_validate(result)
+    except LengthFinishReasonError as error:
+        # Con structured outputs el truncamiento no llega como finish_reason: el
+        # SDK de OpenAI lo lanza como excepcion propia (verificado con max_tokens=30).
+        raise RuntimeError(
+            "La extraccion de cambios quedo incompleta: se alcanzo el limite de "
+            "tokens de salida. Aumentar MODEL_MAX_TOKENS en src/config.py y volver "
+            "a ejecutar."
+        ) from error
     except ValidationError as error:
         raise RuntimeError(
             f"Fallo la validacion de ContractChangeOutput con Pydantic: {error}"
         ) from error
-
-    if not isinstance(result, ContractChangeOutput):
-        # Respaldo de seguridad: si el provider retornara dict, se valida explicitamente.
-        return ContractChangeOutput.model_validate(result)
 
     return result
 
