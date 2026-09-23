@@ -22,8 +22,11 @@ flowchart TD
     IMG1[/"contrato original<br/>(JPEG/PNG)"/] --> P1["parse_contract_image()"]
     IMG2[/"enmienda<br/>(JPEG/PNG)"/] --> P2["parse_contract_image()"]
 
-    P1 -- "texto original" --> A1["<b>Agente 1</b><br/>ContextualizationAgent<br/><i>Analista Legal Senior</i>"]
-    P2 -- "texto enmienda" --> A1
+    P1 -- "texto original" --> MC{"check_document_match()<br/>¿mismo contrato?<br/><i>gpt-4o-mini</i>"}
+    P2 -- "texto enmienda" --> MC
+    MC -- "no" --> REJ[/"DOCUMENTOS NO CORRESPONDEN<br/>exit code 3"/]
+
+    MC -- "sí" --> A1["<b>Agente 1</b><br/>ContextualizationAgent<br/><i>Analista Legal Senior</i>"]
 
     A1 -- "mapa estructural<br/>(Markdown)" --> A2
 
@@ -33,6 +36,8 @@ flowchart TD
     A2 --> V["ContractChangeOutput<br/>validado con Pydantic"]
     V --> OUT[/"JSON"/]
 
+    style MC fill:#5b4a2d,stroke:#d5b35b,color:#fff
+    style REJ fill:#6b2d2d,stroke:#d55b5b,color:#fff
     style A1 fill:#2d4a6b,stroke:#5b9bd5,color:#fff
     style A2 fill:#6b3d2d,stroke:#d59b5b,color:#fff
     style V fill:#2d5b3d,stroke:#5bd58b,color:#fff
@@ -42,6 +47,10 @@ flowchart TD
 recibe solo los dos textos: recibe además el mapa estructural que armó el Agente 1.
 Eso es el *handoff*, y es lo que hace que sean dos agentes colaborando y no dos
 programas corriendo uno después del otro.
+
+El rombo entre el parsing y el Agente 1 **no es un tercer agente**: no analiza
+cambios, solo decide si tiene sentido analizarlos (ver
+[Chequeo de correspondencia](#chequeo-de-correspondencia-antes-de-los-agentes)).
 
 ### Por qué dos agentes y no uno
 
@@ -71,10 +80,11 @@ agentes sería en realidad una de uno con un paso duplicado.
 | # | Paso | Dónde |
 |---|---|---|
 | 1 | **Parsing multimodal** — validación, encoding base64 y llamada a GPT-4o Vision. Corre dos veces, una por documento | `src/image_parser.py` |
+| — | **Chequeo de correspondencia** — corta si los dos documentos no son el mismo contrato. No lo pide la consigna | `src/document_match.py` |
 | 2 | **Contextualización** — mapa de alineación estructural entre ambos documentos | `src/agents/contextualization_agent.py` |
 | 3 | **Extracción** — identifica y clasifica cada cambio: adiciones, eliminaciones, modificaciones | `src/agents/extraction_agent.py` |
 | 4 | **Validación Pydantic** — `ContractChangeOutput` vía structured outputs, con `model_validate()` de respaldo | `src/models.py` |
-| 5 | **Trazabilidad** — span raíz `contract-analysis` con cuatro hijos | `src/main.py` |
+| 5 | **Trazabilidad** — span raíz `contract-analysis` con cinco hijos | `src/main.py` |
 
 ---
 
@@ -84,42 +94,45 @@ agentes sería en realidad una de uno con un paso duplicado.
 src/
 ├── main.py                              entry point, CLI y orquestación
 ├── image_parser.py                      Paso 1
-├── models.py                            ContractChangeOutput
+├── document_match.py                    chequeo de correspondencia
+├── models.py                            ContractChangeOutput, DocumentMatchVerdict
 ├── config.py                            parámetros de los modelos
-├── prompts/                             system prompts, uno por archivo .txt
+├── prompts/                             los 4 system prompts, uno por .txt
 │   └── __init__.py                      load_prompt()
 └── agents/
     ├── contextualization_agent.py       Agente 1
     └── extraction_agent.py              Agente 2
 
-data/test_contracts/                     3 pares de contratos + ground truth
+data/test_contracts/                     3 pares + 2 casos de correspondencia + ground truth
 docs/prompts/                            historial versionado de los prompts
 ```
 
 Las dependencias entre módulos van **en una sola dirección**:
 
 ```
-                        main.py
-              (CLI + orquestación + Langfuse)
-                           │
-        ┌──────────────────┼──────────────────┬─────────────┐
-        ▼                  ▼                  ▼             ▼
-  image_parser.py   contextualization_   extraction_    models.py
-        │              agent.py            agent.py         ▲
-        │                  │                   │            │
-        └──────────────────┴───────┬───────────┴────────────┘
-                                   ▼
-                              config.py
-                         (constantes, sin lógica)
+                                main.py
+                      (CLI + orquestación + Langfuse)
+                                   │
+     ┌───────────────┬─────────────┼─────────────────┬────────────────┐
+     ▼               ▼             ▼                 ▼                ▼
+image_parser  document_match  contextualization_  extraction_     models.py
+    .py           .py            agent.py           agent.py          ▲
+     │               │             │                 │                │
+     └───────────────┴──────┬──────┴─────────────────┴────────────────┘
+                            ▼                    ▼
+                        config.py         prompts/load_prompt()
+                 (constantes, sin lógica)   (lee los .txt)
 ```
 
 **Los dos agentes no se conocen entre sí.** Solo `main.py` conoce a todos, y por
-eso es el único lugar donde se decide el orden de ejecución. `config.py` es una
-hoja sin lógica ni imports: lo consumen los tres módulos que instancian un
-modelo. Cada módulo tiene su propio bloque `if __name__ == "__main__"` y se puede
+eso es el único lugar donde se decide el orden de ejecución y qué hacer con el
+veredicto del chequeo. `config.py` es una hoja sin lógica ni imports: lo
+consumen los cuatro módulos que instancian un modelo, y cada uno carga su prompt
+con `load_prompt()`. Cada módulo tiene su propio bloque `if __name__ == "__main__"` y se puede
 probar aislado.
 
-Todo lo que viaja entre etapas es `str`, menos la salida final. Ningún módulo
+Todo lo que viaja entre etapas es `str`, menos el veredicto del chequeo
+(`DocumentMatchVerdict`) y la salida final. Ningún módulo
 intermedio expone tipos de LangChain: `parse_contract_image()` devuelve
 `response.text`, no un `AIMessage`. Cambiar de framework tocaría un archivo.
 
@@ -172,9 +185,26 @@ uv run python src/main.py \
   data/test_contracts/documento_1_enmienda.jpg
 ```
 
-`uv run python src/main.py --help` lista los argumentos. Un archivo inexistente,
-un formato no soportado o una imagen vacía terminan con un mensaje claro en
-`stderr` y exit code `1`; argumentos mal pasados dan exit code `2`.
+`uv run python src/main.py --help` lista los argumentos. Los códigos de salida:
+
+| Código | Cuándo |
+|---|---|
+| `0` | análisis completo, JSON en `stdout` |
+| `1` | error: archivo inexistente, formato no soportado, imagen vacía, truncamiento, API |
+| `2` | argumentos mal pasados (lo pone `argparse`) |
+| `3` | los dos documentos no son el mismo contrato: `[DOCUMENTOS NO CORRESPONDEN]` y el motivo |
+
+Si el chequeo rechaza un par que sabés que es válido, `--skip-match-check` lo
+saltea. Queda registrado en la metadata del span raíz.
+
+```bash
+uv run python src/main.py \
+  data/test_contracts/documento_4_original.jpg \
+  data/test_contracts/documento_1_enmienda.jpg
+# [DOCUMENTOS NO CORRESPONDEN] Los contratos son distintos y no se pueden comparar.
+# Motivo: ... uno es un Acuerdo de Confidencialidad y el otro es un Contrato de
+# Licencia de Software, con fechas de celebración distintas.
+```
 
 ### Salida
 
@@ -230,18 +260,27 @@ Al final se imprime el link directo a la traza en Langfuse.
 Cada corrida produce una traza jerárquica. Ejemplo real (par 1):
 
 ```
-contract-analysis            ~20 s    ~$0.026    Σ ~6.450 tokens
+contract-analysis            ~26 s    ~$0.027
 ├── parse_original_contract
 │   └── ChatOpenAI            1.286 → 253      GENERATION
 ├── parse_amendment_contract
 │   └── ChatOpenAI            1.286 → 293      GENERATION
+├── document_match_check      2-3 s   ~$0.0002
+│   └── RunnableSequence                       CHAIN
+│       ├── ChatOpenAI       ~1.100 → ~110     GENERATION  gpt-4o-mini
+│       └── RunnableLambda                     parser Pydantic
 ├── contextualization_agent
 │   └── ChatOpenAI              854 → 413      GENERATION
 └── extraction_agent
     └── RunnableSequence                       CHAIN
-        ├── ChatOpenAI        1.804 → 327      GENERATION
+        ├── ChatOpenAI        2.285 → 590      GENERATION
         └── RunnableLambda                     parser Pydantic
 ```
+
+Si el chequeo rechaza el par, la traza termina en `document_match_check`: el
+span raíz queda en `ERROR` y los agentes no aparecen, porque no se ejecutaron.
+Si el chequeo mismo falla (red, timeout), su span queda en `WARNING` y el
+análisis sigue.
 
 Cada span registra input, output, latencia y errores. Los `GENERATION` agregan
 modelo, tokens, costo y los parámetros de la llamada (`temperature: 0`,
@@ -406,19 +445,54 @@ commitea, así que solo lleva parámetros. `OPENAI_API_KEY` y las claves de
 Langfuse salen del `.env` porque son secretos, y las resuelven LangChain y el SDK
 de Langfuse leyendo `os.environ` por su cuenta — el código nunca las toca.
 
+### Chequeo de correspondencia antes de los agentes
+
+**El problema.** Si se pasan el original de un contrato y la enmienda de otro,
+el pipeline los compara igual y el Agente 2 devuelve "cambios" inventados en un
+JSON que pasa la validación de Pydantic. El schema garantiza la forma, no que
+comparar esos dos documentos tenga sentido.
+
+**La solución.** `check_document_match()` recibe los dos textos ya transcriptos
+y devuelve un `DocumentMatchVerdict`. Si `same_agreement` es `False`, `main.py`
+corta antes de los agentes.
+
+| Decisión | Por qué |
+|---|---|
+| Va **después** del parsing | decide con el texto de GPT-4o, que respeta la estructura y lee bien los nombres. Un OCR local (Tesseract) decidiría con un texto peor, y un nombre mal leído rechazaría un par válido |
+| Va **antes** de los agentes | los agentes son ~57 % del costo de una corrida; un par inválido no los paga |
+| Una sola pregunta: ¿**el mismo acuerdo**? | "¿mismas partes?" rechazaría las enmiendas que registran una cesión, y "mismas partes" no alcanza: dos empresas firman varios contratos |
+| `bool`, no probabilidad con umbral | con 11 casos de prueba no se puede calibrar un umbral |
+| `gpt-4o-mini` | acertó 11/11; cuesta ~USD 0.0002 por corrida (<1 %) y suma 2-3 s |
+| Dentro del stack de la consigna | OpenAI + LangChain + Pydantic + Langfuse: ni un binario que instalar ni otro proveedor |
+| No lo hace el Agente 1 | si al Agente 1 le pedís un mapa, tiende a encontrar correspondencias aunque no las haya. Un clasificador aparte es neutral y se mide solo |
+| Fail-open | si el chequeo mismo falla, el análisis sigue con un aviso: es un control de apoyo, no un requisito |
+
+El veredicto lo usa el orquestador, no el módulo que lo produce:
+`document_match.py` devuelve el veredicto y `main.py` decide cortar. Es el mismo
+criterio que los nombres de los spans.
+
+**Validación.** La matriz de 11 casos de `data/test_contracts/README.md` incluye
+dos casos difíciles hechos a propósito: un NDA entre **las mismas partes** del
+par 1 (tiene que rechazarse) y una enmienda del par 1 donde una parte **cede** su
+posición (tiene que aceptarse). Resultado: 11/11. Detalle en
+[`docs/prompts/document_match_system_prompt.md`](docs/prompts/document_match_system_prompt.md).
+
 ### Errores tipados por capa
 
-`main.py` captura cuatro excepciones distintas, de la más específica a la más
+`main.py` captura cinco excepciones distintas, de la más específica a la más
 genérica, y cada una mapea a una etapa del pipeline:
 
-| Excepción | Origen | Mensaje |
-|---|---|---|
-| `FileNotFoundError` | la imagen no existe | `[ERROR DE ARCHIVO]` |
-| `ValueError` | formato, tamaño o archivo vacío | `[ERROR DE VALIDACION]` |
-| `RuntimeError` | truncamiento por tokens, o `ValidationError` de Pydantic | `[ERROR DE EJECUCION]` |
-| `Exception` | red, API caída, 401 | `[ERROR INESPERADO]` |
+| Excepción | Origen | Mensaje | Exit |
+|---|---|---|---|
+| `DocumentMismatchError` | el chequeo determinó que no es el mismo contrato | `[DOCUMENTOS NO CORRESPONDEN]` | `3` |
+| `FileNotFoundError` | la imagen no existe | `[ERROR DE ARCHIVO]` | `1` |
+| `ValueError` | formato, tamaño o archivo vacío | `[ERROR DE VALIDACION]` | `1` |
+| `RuntimeError` | truncamiento por tokens, o `ValidationError` de Pydantic | `[ERROR DE EJECUCION]` | `1` |
+| `Exception` | red, API caída, 401 | `[ERROR INESPERADO]` | `1` |
 
-Ningún traceback crudo llega al usuario. Todos van a `stderr` y devuelven `1`.
+Ningún traceback crudo llega al usuario. Todos van a `stderr`.
+`DocumentMismatchError` hereda de `Exception` y no de `ValueError` a propósito:
+si no, el `except ValueError` la mostraría como un error de la imagen.
 
 ### Truncamiento silencioso tratado como error
 
@@ -427,6 +501,12 @@ con `finish_reason == "length"`. Sin ese chequeo, el Agente 2 vería que faltan 
 últimas cláusulas y reportaría *"se eliminaron las cláusulas 5, 6 y 7"* — una
 alucinación con apariencia de análisis correcto. Por eso se convierte en
 `RuntimeError`.
+
+Con `with_structured_output()` (Agente 2 y chequeo de correspondencia) el
+truncamiento no llega como `finish_reason`: el SDK de OpenAI no puede parsear un
+JSON cortado y lanza `LengthFinishReasonError`. Se verificó forzando
+`max_tokens=30`, y ese módulo la convierte en el mismo `RuntimeError` con la
+causa y el remedio.
 
 ---
 
@@ -493,6 +573,12 @@ de salida. No se puede eliminar la redundancia porque la consigna fija
 elimina: corridas idénticas producen redacciones levemente distintas. Lo estable
 es el contenido — las mismas secciones y los mismos valores.
 
+**El chequeo de correspondencia se validó con 11 casos, en una sola corrida.**
+11/11 es un resultado, no una tasa de error. Hay casos sin probar: dos contratos
+del mismo tipo entre las mismas partes con fechas distintas, o una enmienda que
+no cita al original de ninguna forma. Ante un falso rechazo existe
+`--skip-match-check`.
+
 **Los parámetros del modelo se cambian editando `src/config.py`.** Están
 centralizados y documentados, pero no son configurables desde afuera: probar otro
 modelo requiere editar el archivo, no pasar un flag ni una variable de entorno.
@@ -503,8 +589,8 @@ modelo requiere editar el archivo, no pasar un flag ni una variable de entorno.
 
 | Archivo | Contenido |
 |---|---|
-| [`data/test_contracts/README.md`](data/test_contracts/README.md) | ground truth de los 3 pares, cláusula por cláusula |
-| [`docs/prompts/`](docs/prompts/) | historial versionado de los 3 system prompts, con mediciones |
+| [`data/test_contracts/README.md`](data/test_contracts/README.md) | ground truth de los 3 pares, cláusula por cláusula, y la matriz de correspondencia |
+| [`docs/prompts/`](docs/prompts/) | historial versionado de los 4 system prompts, con mediciones |
 
 ---
 
@@ -513,6 +599,7 @@ modelo requiere editar el archivo, no pasar un flag ni una variable de entorno.
 | Componente | Uso |
 |---|---|
 | OpenAI GPT-4o (Vision) | parsing multimodal y los dos agentes |
+| OpenAI GPT-4o-mini | chequeo de correspondencia |
 | LangChain | orquestación de los agentes y structured outputs |
 | Pydantic | validación del output final |
 | Langfuse | trazabilidad jerárquica del workflow |
