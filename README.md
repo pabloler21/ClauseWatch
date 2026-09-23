@@ -304,13 +304,16 @@ en la terminal y revienta en cualquier sistema que lo lea como UTF-8, que es el
 default en todos lados. Se detectó redirigiendo la salida a un archivo y
 volviéndolo a parsear.
 
-### Chains (LCEL) en vez de `create_agent`
+### Llamadas directas al modelo en vez de `create_agent`
 
 Ninguno de los dos "agentes" tiene herramientas. `create_agent` construye un loop
 ReAct — pensar, llamar tool, observar, repetir — y **sin tools ese loop nunca
 itera**: sería una llamada al modelo con overhead de más. Lo que hay son dos
-cadenas especializadas por rol. Que se llamen "agentes" es la nomenclatura de la
-consigna, no una obligación de usar ese constructor.
+llamadas especializadas por rol: el Agente 1 es un `invoke()` directo sobre el
+modelo, y el Agente 2 es la cadena modelo + parser que arma
+`with_structured_output()` (por eso en Langfuse aparece como `RunnableSequence`).
+Que se llamen "agentes" es la nomenclatura de la consigna, no una obligación de
+usar ese constructor.
 
 ### Bloques multimodales estándar, no el formato de OpenAI
 
