@@ -19,11 +19,11 @@ Esta carpeta guarda esa segunda parte. Sirve para tres cosas:
 
 ## Archivos
 
-| Archivo | Constante | Ubicación en el código | Paso | Versión viva |
-|---|---|---|---|---|
-| [`transcription_system_prompt.md`](transcription_system_prompt.md) | `TRANSCRIPTION_SYSTEM_PROMPT` | `src/image_parser.py` | 1 — Parsing multimodal | v1 |
-| [`contextualization_system_prompt.md`](contextualization_system_prompt.md) | `CONTEXTUALIZATION_SYSTEM_PROMPT` | `src/agents/contextualization_agent.py` | 2 — Agente 1 | v1 |
-| [`extraction_system_prompt.md`](extraction_system_prompt.md) | `EXTRACTION_SYSTEM_PROMPT` | `src/agents/extraction_agent.py` | 3 — Agente 2 | **v4** |
+| Archivo | Constante | Texto vivo (`src/prompts/`) | Módulo que lo carga | Paso | Versión viva |
+|---|---|---|---|---|---|
+| [`transcription_system_prompt.md`](transcription_system_prompt.md) | `TRANSCRIPTION_SYSTEM_PROMPT` | `transcription_system_prompt.txt` | `src/image_parser.py` | 1 — Parsing multimodal | v1 |
+| [`contextualization_system_prompt.md`](contextualization_system_prompt.md) | `CONTEXTUALIZATION_SYSTEM_PROMPT` | `contextualization_system_prompt.txt` | `src/agents/contextualization_agent.py` | 2 — Agente 1 | v1 |
+| [`extraction_system_prompt.md`](extraction_system_prompt.md) | `EXTRACTION_SYSTEM_PROMPT` | `extraction_system_prompt.txt` | `src/agents/extraction_agent.py` | 3 — Agente 2 | **v4** |
 
 ## Convención para agregar una versión
 
@@ -40,8 +40,9 @@ Cada versión nueva lleva:
   el archivo tiene que poder leerse sin reconstruir nada.
 - **Resultado medido**: qué se corrió, qué pasó, cuánto costó en tokens.
 
-La fuente de verdad del texto **vivo** es siempre el `.py`. Este archivo es el
-registro histórico y el razonamiento; si los dos se contradicen, gana el `.py` y
+La fuente de verdad del texto **vivo** es siempre el `.txt` de `src/prompts/`,
+que es exactamente lo que recibe el modelo. Este archivo es el registro histórico
+y el razonamiento; si los dos se contradicen, gana el `.txt` y
 hay que corregir el `.md`.
 
 ## Ground truth

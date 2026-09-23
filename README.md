@@ -86,6 +86,8 @@ src/
 ├── image_parser.py                      Paso 1
 ├── models.py                            ContractChangeOutput
 ├── config.py                            parámetros de los modelos
+├── prompts/                             system prompts, uno por archivo .txt
+│   └── __init__.py                      load_prompt()
 └── agents/
     ├── contextualization_agent.py       Agente 1
     └── extraction_agent.py              Agente 2
@@ -374,6 +376,21 @@ def sections_must_match_changes(self) -> "ContractChangeOutput":
 Sin él, el bloque `except ValidationError` del agente prácticamente nunca se
 ejecutaría, porque structured outputs ya garantiza los tipos. Con él, la
 validación de Pydantic chequea algo que el schema no puede.
+
+### Los prompts viven en archivos, no en el código
+
+Cada system prompt está en `src/prompts/<nombre>.txt` y el módulo que lo usa lo
+carga al importarse con `load_prompt()`:
+
+```python
+EXTRACTION_SYSTEM_PROMPT: str = load_prompt("extraction_system_prompt")
+```
+
+El prompt es la pieza que más se itera (el de extracción va por la v4), y
+separarlo permite editarlo y revisar su diff sin tocar lógica. El `.txt` contiene
+exactamente lo que recibe el modelo, sin encabezados; su historial y el porqué
+de cada regla están en `docs/prompts/`. La carga falla al importar si el archivo
+falta o está vacío: mejor eso que una llamada a la API sin instrucciones.
 
 ### Los parámetros del modelo viven en `src/config.py`
 

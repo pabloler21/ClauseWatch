@@ -1,7 +1,7 @@
 # `EXTRACTION_SYSTEM_PROMPT`
 
 **Agente 2 — ExtractionAgent** · Paso 3 y 4 del pipeline
-Definido en [`src/agents/extraction_agent.py`](../../src/agents/extraction_agent.py)
+Texto vivo en [`src/prompts/extraction_system_prompt.txt`](../../src/prompts/extraction_system_prompt.txt), cargado por [`src/agents/extraction_agent.py`](../../src/agents/extraction_agent.py)
 
 Rol: **Auditor Legal Senior de Compliance**. Recibe los dos textos parseados más el
 mapa estructural del Agente 1, y extrae cada cambio introducido por la enmienda.

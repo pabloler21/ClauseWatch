@@ -1,7 +1,7 @@
 # `TRANSCRIPTION_SYSTEM_PROMPT`
 
 **Paso 1 — Parsing multimodal**
-Definido en [`src/image_parser.py`](../../src/image_parser.py)
+Texto vivo en [`src/prompts/transcription_system_prompt.txt`](../../src/prompts/transcription_system_prompt.txt), cargado por [`src/image_parser.py`](../../src/image_parser.py)
 
 Rol: **motor de transcripción**. Recibe la imagen de un contrato codificada en
 base64 y devuelve su texto. Se ejecuta dos veces por análisis, una por documento.

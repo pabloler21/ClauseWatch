@@ -1,7 +1,7 @@
 # `CONTEXTUALIZATION_SYSTEM_PROMPT`
 
 **Agente 1 — ContextualizationAgent** · Paso 2 del pipeline
-Definido en [`src/agents/contextualization_agent.py`](../../src/agents/contextualization_agent.py)
+Texto vivo en [`src/prompts/contextualization_system_prompt.txt`](../../src/prompts/contextualization_system_prompt.txt), cargado por [`src/agents/contextualization_agent.py`](../../src/agents/contextualization_agent.py)
 
 Rol: **Analista Legal Senior** especializado en mapeo estructural. Recibe los dos
 textos parseados y produce un mapa de alineación entre secciones. Devuelve
