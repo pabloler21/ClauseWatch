@@ -1,4 +1,4 @@
-"""Modelo Pydantic que estructura y valida la salida del ExtractionAgent."""
+"""Modelos Pydantic que estructuran y validan las salidas de los modelos del pipeline."""
 
 from typing import Literal
 
@@ -93,3 +93,39 @@ class ContractChangeOutput(BaseModel):
             )
 
         return self
+
+
+class DocumentMatchVerdict(BaseModel):
+    """Verdict on whether two documents belong to the same agreement.
+
+    Produced by the document match check before the two agents run, so that an
+    unrelated pair of documents is rejected instead of compared.
+    """
+
+    # Una sola decision y no "mismas partes AND mismo objeto": una enmienda puede
+    # cambiar una parte (cesion, fusion) y seguir siendo el mismo contrato.
+    same_agreement: bool = Field(
+        description=(
+            "True if the second document amends, restates or replaces the specific "
+            "agreement in the first document. False if it is a different agreement, "
+            "even between the same parties."
+        )
+    )
+    matching_evidence: list[str] = Field(
+        description=(
+            "Verbatim quotes from either document that support correspondence: "
+            "title, execution date, parties, explicit reference to the original."
+        )
+    )
+    mismatch_evidence: list[str] = Field(
+        description=(
+            "Verbatim quotes from either document that contradict correspondence: "
+            "a different agreement type, date, subject matter or unrelated parties."
+        )
+    )
+    reason: str = Field(
+        description=(
+            "One or two sentences in Spanish explaining the verdict, suitable to "
+            "show to the user if the pair is rejected."
+        )
+    )
