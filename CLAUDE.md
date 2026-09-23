@@ -137,22 +137,30 @@ CLAUDE.md          consigna.md        pyproject.toml     uv.lock
 requirements.txt   .env (ignorado)    .env.example       .gitignore
 .gitattributes     .python-version    README.md (~20 KB, completo)
 src/config.py      src/models.py      src/image_parser.py    src/main.py
+src/document_match.py
+src/prompts/           __init__.py (load_prompt) + los 4 system prompts en .txt
 src/agents/contextualization_agent.py
 src/agents/extraction_agent.py
-data/test_contracts/   6 imágenes = 3 pares + README.md (ground truth)
-docs/prompts/          historial versionado de los 3 system prompts + README
+data/test_contracts/   8 imágenes = 3 pares + 2 de correspondencia + README.md
+docs/prompts/          historial versionado de los 4 system prompts + README
 ```
 
-**Hecho — pipeline completo de los 5 pasos, corriendo end-to-end:**
+**Hecho — pipeline completo de los 5 pasos más el chequeo de correspondencia,
+corriendo end-to-end:**
+- `src/prompts/` — cada system prompt es un `.txt` con exactamente lo que recibe
+  el modelo. `load_prompt(name)` lo lee con utf-8 al importar el módulo y falla si
+  el archivo falta o está vacío. Las constantes (`EXTRACTION_SYSTEM_PROMPT`,
+  etc.) conservan su nombre. Verificado byte a byte contra los strings anteriores.
 - `src/config.py` — `MODEL_NAME`, `MODEL_TEMPERATURE`, `MODEL_TIMEOUT_SECONDS`
-  (60), `MODEL_MAX_TOKENS` (4000). Lo importan los tres módulos que llaman a
-  `init_chat_model()`. Sin credenciales.
+  (60), `MODEL_MAX_TOKENS` (4000), más `MATCH_CHECK_MODEL_NAME`
+  (`openai:gpt-4o-mini`) y `MATCH_CHECK_MAX_TOKENS` (1000). Sin credenciales.
 - `src/models.py` — `ClauseChange` (`section`, `change_type:
   Literal["addition","deletion","modification"]`, `detail`) y
   `ContractChangeOutput` con los 3 campos de la consigna **más** `changes:
   list[ClauseChange]`. Todos con `Field(description=...)`. `@model_validator`
   `sections_must_match_changes` exige que las secciones de `changes` coincidan
-  con `sections_changed`.
+  con `sections_changed`. `DocumentMatchVerdict` (`same_agreement`,
+  `matching_evidence`, `mismatch_evidence`, `reason`) para el chequeo.
 - `src/image_parser.py` — Paso 1. `validate_image_file()` +
   `encode_image_to_base64()` + `parse_contract_image()`. Bloques multimodales
   estándar, guardia contra truncamiento por `finish_reason == "length"`.
@@ -161,39 +169,35 @@ docs/prompts/          historial versionado de los 3 system prompts + README
   prohíbe extraer cambios. Prompt v1.
 - `src/agents/extraction_agent.py` — Paso 3 + 4. `extract_contract_changes()`,
   rol "Senior Legal Compliance Auditor". `with_structured_output(ContractChangeOutput)`,
-  `ValidationError` → `RuntimeError`. Prompt **v4**.
-- `src/main.py` — Paso 5. CLI `argparse`, span raíz `contract-analysis` con
-  cuatro hijos `@observe`, un `CallbackHandler` por etapa. `main()` genera el
-  trace id y resuelve la URL fuera del span (`_resolve_trace_url`, tolerante a
-  fallos). JSON a stdout, progreso/errores/link a stderr, stdout forzado a UTF-8,
-  exit code 1 ante error.
+  `ValidationError` y `openai.LengthFinishReasonError` → `RuntimeError`.
+  Prompt **v4**.
+- `src/document_match.py` — chequeo de correspondencia entre el parsing y los
+  agentes. `check_document_match()` devuelve un `DocumentMatchVerdict`; no
+  decide qué hacer con él. `gpt-4o-mini`, 11/11 en la matriz de prueba, ~USD
+  0.0002 y 2-3 s por corrida (medido en Langfuse). Prompt v1.
+- `src/main.py` — Paso 5. CLI `argparse` con `--skip-match-check`, span raíz
+  `contract-analysis` con cinco hijos `@observe`, un `CallbackHandler` por
+  etapa. Si el veredicto es negativo lanza `DocumentMismatchError` antes de los
+  agentes (exit 3); si el chequeo falla, sigue y marca el span `WARNING`.
+  `main()` genera el trace id y resuelve la URL fuera del span. JSON a stdout,
+  progreso/errores/link a stderr, stdout forzado a UTF-8. Exit codes como
+  constantes: 0, 1, 3 (2 es de argparse).
 - `README.md` — completo: arquitectura con Mermaid, grafo de dependencias,
   setup, uso, salida de ejemplo, observabilidad, decisiones técnicas, validación
   contra ground truth (v1→v3 del prompt), limitaciones.
 - `docs/prompts/` — historial versionado. Viva: transcripción v1,
-  contextualización v1, extracción v4 (3/3 pares exactos contra ground truth).
+  contextualización v1, extracción v4 (3/3 pares exactos contra ground truth),
+  correspondencia v1 (11/11).
 - Entorno: `uv` + `pyproject.toml` (5 dependencias directas, sin muertas).
   Instalado: `langchain 1.3.18`, `langchain-core 1.6.1`, `langchain-openai 1.6.0`,
   `openai 3.7.0`, `pydantic 2.13.5`, `python-dotenv 1.2.3`, `langfuse 4.15.1`.
   `.env` y `.env.example` usan `LANGFUSE_BASE_URL`.
 
-**Inconsistencias menores detectadas en la revisión del 2026-09-23** (sin corregir):
-- `src/config.py:24-25` dice que *cada* módulo verifica `finish_reason ==
-  "length"`, pero `extraction_agent.py` no lo hace. Un truncamiento ahí llega
-  como error de validación de Pydantic, con un mensaje que no dice la causa real.
-- Los mensajes de truncamiento (`image_parser.py:200`,
-  `contextualization_agent.py:106`) dicen "Aumentar max_tokens en
-  init_chat_model()": desde `1e2c076` el valor vive en `MODEL_MAX_TOKENS` de
-  `src/config.py`.
-- `extraction_agent.py:84-86`: el `Returns` del docstring no menciona `changes`.
-- `extraction_agent.py:124-126`: el `model_validate()` de respaldo está fuera del
-  `try`; si fallara, su `ValidationError` (subclase de `ValueError`) caería en
-  `main.py` como `[ERROR DE VALIDACION]`, el mensaje pensado para imágenes.
-- `main.py`: `parse_args()` y `main()` no tienen `Returns` en el docstring
-  (regla 6).
-- README "Chains (LCEL) en vez de `create_agent`": el Agente 1 no usa LCEL, es un
-  `chat_model.invoke()` directo; solo el Agente 2 es una cadena (la que arma
-  `with_structured_output`). La justificación vale, el nombre no.
+**Inconsistencias de la revisión del 2026-09-23 — todas corregidas**
+(`9c21e9b`, commits `fix:` y `docs:` de esa fecha). Una estaba mal diagnosticada:
+el truncamiento del Agente 2 no llegaba como error de Pydantic sino como
+`openai.LengthFinishReasonError` (✅ reproducido con `max_tokens=30`), que
+`main.py` mostraba como `[ERROR INESPERADO]`.
 
 ### Traza de referencia verificada en Langfuse — 2026-09-03 (prompts v1)
 
@@ -235,9 +239,12 @@ Resumen: par 1 = 5 modificaciones + 1 adición + 1 sin cambios. Par 2 = 4
 modificaciones + 1 adición + 2 sin cambios. Par 3 = 3 modificaciones + 2 sin
 cambios.
 
-Partes de cada par (relevante para cualquier chequeo de correspondencia):
-par 1 TechNova / DataBridge, par 2 Orion / GreenWave, par 3 CloudMetrics /
-RetailPulse. Los tres pares tienen partes y objeto distintos entre sí.
+Partes de cada par: par 1 TechNova / DataBridge, par 2 Orion / GreenWave,
+par 3 CloudMetrics / RetailPulse. La matriz de 11 casos del chequeo de
+correspondencia también vive en `data/test_contracts/README.md`; los dos casos
+difíciles son `documento_4_original.jpg` (NDA entre las partes del par 1) y
+`documento_1_enmienda_cesion.jpg` (cesión a Nexa Data Systems). Ambas imágenes
+se generaron con Pillow desde un script fuera del repo.
 
 **Limitación conocida del set: ningún par elimina una cláusula entera.** La
 única eliminación es interna (par 1, cláusula 1: desaparece "e intransferible").
@@ -256,6 +263,23 @@ versiones fijadas. Igual se agregó un `requirements.txt` generado con
 **`main.py` de la raíz borrado** — era el placeholder de `uv init`. El entry
 point va en `src/main.py`.
 
+**Prompts en archivos, no en el código (2026-09-23, `de14498`).** Cada system
+prompt vive en `src/prompts/<nombre>.txt` y el módulo lo carga con
+`load_prompt()`. `.txt` y no `.md` para no confundir el texto vivo con su
+historial en `docs/prompts/*.md`.
+
+**Chequeo de correspondencia entre documentos (2026-09-23).** Corre después del
+parsing, sobre el texto de GPT-4o, y antes de los agentes. Descartado: OCR local
+con Tesseract + Jev antes del parsing (reintroducía una dependencia de OCR,
+sumaba un proveedor fuera del stack, decidía con el texto peor, y "¿mismas
+partes?" rechazaría una cesión). Una sola decisión `same_agreement` en vez de
+dos preguntas combinadas con AND; booleano en vez de umbral (11 casos no
+calibran nada). Fail-open ante fallo del chequeo; `--skip-match-check` ante un
+falso rechazo. Precios verificados 2026-09-23 en
+https://developers.openai.com/api/docs/models/gpt-4o-mini (USD 0.15/M in,
+0.60/M out) y https://developers.openai.com/api/docs/models/gpt-4o (USD 2.50/M
+in, 10/M out).
+
 **`Field(description=...)` incorporadas (`f0c77f4`).** Se midió con y sin sobre
 el par 1: salida idéntica, +109 tokens de prompt. Se incorporaron igual porque la
 rúbrica 1.3 las pide. El README dice que no mejoran la salida.
@@ -270,8 +294,9 @@ Constantes con nombre, no variables de entorno. Riesgo residual con la rúbrica
 2.2: no es configurable desde afuera sin editar el archivo; el README lo declara
 como limitación.
 
-**Chains en vez de `create_agent`.** Ninguno de los dos agentes tiene tools;
-justificado en el README.
+**Llamadas directas en vez de `create_agent`.** Ninguno de los dos agentes tiene
+tools; justificado en el README (el Agente 1 es un `invoke()` directo, el Agente
+2 la cadena de `with_structured_output()`).
 
 **Dependencias muertas eliminadas (`28b49d1`)** — `pillow`, `pytesseract` y
 `dotenv`. **`LANGFUSE_HOST` renombrado a `LANGFUSE_BASE_URL` (`83d204d`).**
@@ -297,19 +322,10 @@ y **un fallo de telemetría no tumba el reporte (`8564899`).**
 
 ## 6. Abierto — resolver con evidencia, no discutiendo
 
-**Chequeo de correspondencia entre documentos — propuesta en evaluación, NO
-decidida (2026-09-23).**
-Problema: si se pasan el original de un contrato y la enmienda de otro, el
-pipeline los compara igual y devuelve cambios inventados en un JSON válido.
-Propuesta inicial (descartada en la revisión): OCR local con Tesseract + Jev
-(TypeSafe) antes del parsing. Objeciones: reintroduce la dependencia de OCR
-recién eliminada, suma un proveedor fuera del stack obligatorio, decide con el
-texto de menor calidad, y la pregunta "¿mismas partes?" rechazaría enmiendas
-legítimas que cambian una parte (cesión, cambio de razón social).
-Alternativa sobre la mesa: un chequeo entre el parsing y los agentes, sobre el
-texto de GPT-4o, con salida estructurada Pydantic y su propio span. Validación
-necesaria: las 6 combinaciones cruzadas del set + un negativo difícil (mismas
-partes, otro contrato) + un positivo difícil (enmienda que cambia una parte).
+**Chequeo de correspondencia: robustez.** 11/11 en una sola corrida. Si
+importa poder afirmar una tasa de error, repetir la matriz y sumar casos
+difíciles (mismo tipo de contrato entre las mismas partes con fechas distintas;
+enmienda que no cita al original).
 
 **Configurabilidad del modelo por entorno.** Ver §5: hoy se edita
 `src/config.py`. Decidir si se leen overrides desde `.env` para cerrar el
@@ -380,3 +396,10 @@ funciona, pero ata el código al proveedor. Filtro rápido: si el ejemplo dice
 - Un único `CallbackHandler()` alcanza para todo el pipeline: mantiene su estado
   por corrida en un dict indexado por UUID de run. Crear uno por etapa (como
   hace hoy `main.py`) funciona igual, pero no es necesario.
+- `update_current_span(level=..., status_message=..., metadata=...)` existe en
+  4.15.1 (✅ `client.py:1492`); `SpanLevel = Literal["DEBUG", "DEFAULT",
+  "WARNING", "ERROR"]` (✅ `langfuse/types.py:43`).
+- Los `usage_details` de una generación separan `input` de `input_cache_read`:
+  OpenAI cachea prompts repetidos, y una corrida justo después de otra con las
+  mismas imágenes reporta `input` mucho menor. Para medir costo, usar corridas
+  sin caché o sumar ambos campos.
