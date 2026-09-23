@@ -2,13 +2,14 @@
 
 Orquesta el analisis multi-agente de contratos a partir de dos imagenes escaneadas:
 1. Parsing multimodal con GPT-4o Vision (contrato original y adenda).
+   Chequeo de correspondencia: corta si los documentos no son el mismo contrato.
 2. Mapeo estructural de correspondencias con ContextualizationAgent (Agente 1).
 3. Extraccion y clasificacion de cambios legales con ExtractionAgent (Agente 2).
 4. Validacion estructurada de salida con Pydantic (ContractChangeOutput).
 5. Trazabilidad completa y observabilidad jerarquica instrumentada con Langfuse.
 
 Uso por CLI:
-    uv run python src/main.py <path_contrato_original> <path_enmienda>
+    uv run python src/main.py <path_contrato_original> <path_enmienda> [--skip-match-check]
 """
 
 import argparse
@@ -27,11 +28,38 @@ from langfuse.langchain import CallbackHandler
 
 from src.agents.contextualization_agent import analyze_contract_structure
 from src.agents.extraction_agent import extract_contract_changes
+from src.document_match import check_document_match
 from src.image_parser import parse_contract_image
-from src.models import ContractChangeOutput
+from src.models import ContractChangeOutput, DocumentMatchVerdict
 
 # Carga variables de entorno (OPENAI_API_KEY, credenciales de Langfuse).
 load_dotenv()
+
+# Codigos de salida de la CLI. El 2 lo reserva argparse para argumentos invalidos.
+EXIT_SUCCESS: int = 0
+EXIT_FAILURE: int = 1
+# Propio y no 1: un script que llame a la CLI distingue "rechazado" de "fallo".
+EXIT_DOCUMENTS_MISMATCH: int = 3
+
+
+class DocumentMismatchError(Exception):
+    """Los dos documentos no pertenecen al mismo contrato y no se comparan.
+
+    Hereda de Exception y no de ValueError: si no, `main()` la mostraria como
+    un error de validacion de la imagen.
+
+    Attributes:
+        reason: Motivo del rechazo en espanol, tal como lo dio el chequeo.
+    """
+
+    def __init__(self, reason: str) -> None:
+        """Guarda el motivo del rechazo.
+
+        Args:
+            reason: Motivo del rechazo en espanol.
+        """
+        super().__init__(reason)
+        self.reason = reason
 
 
 # --- Spans hijos instrumentados con Langfuse ---------------------------------
@@ -53,6 +81,39 @@ def _step_parse_amendment(image_path: str | Path) -> str:
     """Span hijo: parsea la imagen de la enmienda o adenda."""
     handler = CallbackHandler()
     return parse_contract_image(image_path, callbacks=[handler])
+
+
+@observe(name="document_match_check")
+def _step_document_match(
+    original_text: str,
+    amendment_text: str,
+) -> DocumentMatchVerdict | None:
+    """Span hijo: verifica que ambos documentos sean el mismo contrato.
+
+    Si el chequeo mismo falla (red, timeout, validacion), el analisis sigue:
+    es un control de apoyo, no un requisito. El fallo queda marcado en el span.
+
+    Args:
+        original_text: Texto transcripto del contrato original.
+        amendment_text: Texto transcripto de la enmienda.
+
+    Returns:
+        El veredicto, o None si el chequeo no pudo completarse.
+    """
+    handler = CallbackHandler()
+    try:
+        return check_document_match(original_text, amendment_text, callbacks=[handler])
+    except Exception as error:
+        print(
+            f"\n[AVISO] No se pudo verificar la correspondencia ({type(error).__name__}). "
+            f"El analisis continua sin ese control.",
+            file=sys.stderr,
+        )
+        get_client().update_current_span(
+            level="WARNING",
+            status_message=f"Chequeo de correspondencia omitido: {type(error).__name__}",
+        )
+        return None
 
 
 @observe(name="contextualization_agent")
@@ -84,6 +145,7 @@ def _step_extraction(
 def run_contract_analysis(
     original_path: str | Path,
     amendment_path: str | Path,
+    skip_match_check: bool = False,
 ) -> ContractChangeOutput:
     """Ejecuta el pipeline completo bajo el span raiz 'contract-analysis'.
 
@@ -94,23 +156,40 @@ def run_contract_analysis(
     Args:
         original_path: Ruta a la imagen del contrato original.
         amendment_path: Ruta a la imagen de la adenda/enmienda.
+        skip_match_check: Si es True, no verifica que ambos documentos sean el
+            mismo contrato. Queda registrado en la metadata del span raiz.
 
     Returns:
         El objeto Pydantic validado con los cambios detectados entre ambos
         documentos.
+
+    Raises:
+        DocumentMismatchError: Si el chequeo determina que los documentos no
+            pertenecen al mismo contrato. Se lanza antes de correr los agentes.
     """
     # El progreso va a stderr para que stdout quede con el JSON puro y se pueda redirigir.
     # 1. Parsing multimodal de ambos documentos
-    print("[1/3] Parseando imagenes con GPT-4o Vision...", file=sys.stderr)
+    print("[1/4] Parseando imagenes con GPT-4o Vision...", file=sys.stderr)
     original_text = _step_parse_original(original_path)
     amendment_text = _step_parse_amendment(amendment_path)
 
-    # 2. Contextualizacion estructural (Agente 1)
-    print("[2/3] Generando mapa contextual con ContextualizationAgent...", file=sys.stderr)
+    # 2. Chequeo de correspondencia: despues del parsing porque decide con el
+    # texto de GPT-4o, y antes de los agentes porque son ~57 % del costo.
+    if skip_match_check:
+        print("[2/4] Chequeo de correspondencia omitido por --skip-match-check.", file=sys.stderr)
+        get_client().update_current_span(metadata={"match_check": "skipped_by_user"})
+    else:
+        print("[2/4] Verificando que ambos documentos sean el mismo contrato...", file=sys.stderr)
+        verdict = _step_document_match(original_text, amendment_text)
+        if verdict is not None and not verdict.same_agreement:
+            raise DocumentMismatchError(verdict.reason)
+
+    # 3. Contextualizacion estructural (Agente 1)
+    print("[3/4] Generando mapa contextual con ContextualizationAgent...", file=sys.stderr)
     contextual_map = _step_contextualization(original_text, amendment_text)
 
-    # 3. Extraccion y estructuracion (Agente 2)
-    print("[3/3] Extrayendo cambios con ExtractionAgent...", file=sys.stderr)
+    # 4. Extraccion y estructuracion (Agente 2)
+    print("[4/4] Extrayendo cambios con ExtractionAgent...", file=sys.stderr)
     contract_changes = _step_extraction(
         original_text, amendment_text, contextual_map
     )
@@ -122,7 +201,12 @@ def run_contract_analysis(
 
 
 def parse_args() -> argparse.Namespace:
-    """Configura y parsea los argumentos de linea de comandos."""
+    """Configura y parsea los argumentos de linea de comandos.
+
+    Returns:
+        Los argumentos parseados: `original_image`, `amendment_image` y
+        `skip_match_check`.
+    """
     parser = argparse.ArgumentParser(
         prog="clausewatch",
         description="ClauseWatch — Analisis y auditoria automatizada de contratos mediante agentes de IA.",
@@ -137,6 +221,14 @@ def parse_args() -> argparse.Namespace:
         "amendment_image",
         type=str,
         help="Ruta al archivo de imagen de la enmienda o adenda (JPEG/PNG).",
+    )
+    parser.add_argument(
+        "--skip-match-check",
+        action="store_true",
+        help=(
+            "No verificar que ambos documentos sean el mismo contrato. Para cuando "
+            "el chequeo rechaza un par que el usuario sabe que es valido."
+        ),
     )
     return parser.parse_args()
 
@@ -170,7 +262,11 @@ def _resolve_trace_url(client: Langfuse, trace_id: str) -> str | None:
 
 
 def main() -> int:
-    """Entry point CLI del programa."""
+    """Entry point CLI del programa.
+
+    Returns:
+        El codigo de salida: EXIT_SUCCESS, EXIT_FAILURE o EXIT_DOCUMENTS_MISMATCH.
+    """
     # Sin esto, al redirigir la salida en Windows Python usa la codepage de la
     # consola (cp1252) y el JSON con acentos deja de ser UTF-8 valido.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -187,27 +283,36 @@ def main() -> int:
 
     # Un unico punto de salida: los except marcan el codigo pero no cortan, asi
     # el link de la traza se imprime tambien cuando el pipeline falla.
-    exit_code = 0
+    exit_code = EXIT_SUCCESS
     results: ContractChangeOutput | None = None
 
     try:
         results = run_contract_analysis(
             args.original_image,
             args.amendment_image,
+            skip_match_check=args.skip_match_check,
             langfuse_trace_id=trace_id,
         )
+    except DocumentMismatchError as e:
+        print(
+            f"\n[DOCUMENTOS NO CORRESPONDEN] Los contratos son distintos y no se "
+            f"pueden comparar.\nMotivo: {e.reason}\n"
+            f"Si el par es correcto, volver a ejecutar con --skip-match-check.",
+            file=sys.stderr,
+        )
+        exit_code = EXIT_DOCUMENTS_MISMATCH
     except FileNotFoundError as e:
         print(f"\n[ERROR DE ARCHIVO] {e}", file=sys.stderr)
-        exit_code = 1
+        exit_code = EXIT_FAILURE
     except ValueError as e:
         print(f"\n[ERROR DE VALIDACION] {e}", file=sys.stderr)
-        exit_code = 1
+        exit_code = EXIT_FAILURE
     except RuntimeError as e:
         print(f"\n[ERROR DE EJECUCION] {e}", file=sys.stderr)
-        exit_code = 1
+        exit_code = EXIT_FAILURE
     except Exception as e:
         print(f"\n[ERROR INESPERADO] {e}", file=sys.stderr)
-        exit_code = 1
+        exit_code = EXIT_FAILURE
     finally:
         # Vacia el buffer de telemetria para garantizar que todos los spans lleguen a Langfuse Cloud.
         lf_client.flush()
