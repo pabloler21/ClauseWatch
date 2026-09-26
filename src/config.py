@@ -11,6 +11,8 @@ Las credenciales NO van aca. `OPENAI_API_KEY` y las claves de Langfuse salen del
 secretos y este archivo se commitea.
 """
 
+from pathlib import Path
+
 # Identificador "proveedor:modelo" que espera init_chat_model(). Cambiar el
 # proveedor aca alcanza para todo el pipeline, si el paquete esta instalado.
 MODEL_NAME: str = "openai:gpt-4o"
@@ -34,3 +36,9 @@ MATCH_CHECK_MODEL_NAME: str = "openai:gpt-4o-mini"
 
 # El veredicto son cuatro campos cortos: 1000 tokens sobran y acotan el costo.
 MATCH_CHECK_MAX_TOKENS: int = 1000
+
+
+# --- Registro de transcripciones (cache del parsing) --------------------------
+# Relativo a la raiz del proyecto y no al directorio de trabajo, igual que los
+# prompts. Esta en .gitignore: son datos derivados de cada maquina.
+PARSE_CACHE_DIR: Path = Path(__file__).resolve().parents[1] / "data" / "parsed_contracts"

@@ -11,3 +11,6 @@ wheels/
 
 # Secrets
 .env
+
+# Registro local de transcripciones (cache del parsing)
+data/parsed_contracts/
