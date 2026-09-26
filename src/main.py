@@ -9,7 +9,8 @@ Orquesta el analisis multi-agente de contratos a partir de dos imagenes escanead
 5. Trazabilidad completa y observabilidad jerarquica instrumentada con Langfuse.
 
 Uso por CLI:
-    uv run python src/main.py <path_contrato_original> <path_enmienda> [--skip-match-check]
+    uv run python src/main.py <path_contrato_original> <path_enmienda>
+        [--skip-match-check] [--refresh-cache]
 """
 
 import argparse
@@ -31,6 +32,11 @@ from src.agents.extraction_agent import extract_contract_changes
 from src.document_match import check_document_match
 from src.image_parser import parse_contract_image
 from src.models import ContractChangeOutput, DocumentMatchVerdict
+from src.parse_cache import (
+    CacheEntryCorruptError,
+    load_cached_transcription,
+    save_transcription,
+)
 
 # Carga variables de entorno (OPENAI_API_KEY, credenciales de Langfuse).
 load_dotenv()
@@ -69,18 +75,69 @@ class DocumentMismatchError(Exception):
 # El CallbackHandler inyectado en cada llamada captura tokens, modelo y costo.
 
 
-@observe(name="parse_original_contract")
-def _step_parse_original(image_path: str | Path) -> str:
-    """Span hijo: parsea la imagen del contrato original."""
+def _parse_with_cache(image_path: str | Path, refresh_cache: bool) -> str:
+    """Devuelve la transcripcion de una imagen, desde el registro si ya existe.
+
+    Corre dentro del span de parsing que la llama y le agrega la metadata
+    `parse_cache` (hit, miss o refresh). En un acierto no hay generacion hija.
+
+    Args:
+        image_path: Ruta a la imagen del contrato.
+        refresh_cache: Si es True, ignora lo guardado y vuelve a parsear.
+
+    Returns:
+        El texto transcripto de la imagen.
+
+    Raises:
+        FileNotFoundError: Si la imagen no existe.
+        ValueError: Si la imagen no es valida.
+        RuntimeError: Si la transcripcion quedo truncada.
+    """
+    image_name = Path(image_path).name
+    cached_text: str | None = None
+
+    if not refresh_cache:
+        try:
+            cached_text = load_cached_transcription(image_path)
+        except CacheEntryCorruptError as error:
+            # Una entrada rota se trata como ausente: el guardado de abajo la sobrescribe.
+            print(f"\n[AVISO] {error}. Se vuelve a parsear.", file=sys.stderr)
+
+    if cached_text is not None:
+        print(f"      {image_name}: transcripcion tomada del registro.", file=sys.stderr)
+        get_client().update_current_span(metadata={"parse_cache": "hit"})
+        return cached_text
+
     handler = CallbackHandler()
-    return parse_contract_image(image_path, callbacks=[handler])
+    transcription = parse_contract_image(image_path, callbacks=[handler])
+    get_client().update_current_span(
+        metadata={"parse_cache": "refresh" if refresh_cache else "miss"}
+    )
+
+    # Mismo criterio que la telemetria: un registro que no se pudo escribir no
+    # invalida una transcripcion que ya se pago.
+    try:
+        save_transcription(image_path, transcription)
+    except OSError as error:
+        print(
+            f"\n[AVISO] No se pudo guardar {image_name} en el registro "
+            f"({type(error).__name__}). El analisis continua.",
+            file=sys.stderr,
+        )
+
+    return transcription
+
+
+@observe(name="parse_original_contract")
+def _step_parse_original(image_path: str | Path, refresh_cache: bool = False) -> str:
+    """Span hijo: transcribe el contrato original, o lo toma del registro."""
+    return _parse_with_cache(image_path, refresh_cache)
 
 
 @observe(name="parse_amendment_contract")
-def _step_parse_amendment(image_path: str | Path) -> str:
-    """Span hijo: parsea la imagen de la enmienda o adenda."""
-    handler = CallbackHandler()
-    return parse_contract_image(image_path, callbacks=[handler])
+def _step_parse_amendment(image_path: str | Path, refresh_cache: bool = False) -> str:
+    """Span hijo: transcribe la enmienda o adenda, o la toma del registro."""
+    return _parse_with_cache(image_path, refresh_cache)
 
 
 @observe(name="document_match_check")
@@ -146,6 +203,7 @@ def run_contract_analysis(
     original_path: str | Path,
     amendment_path: str | Path,
     skip_match_check: bool = False,
+    refresh_cache: bool = False,
 ) -> ContractChangeOutput:
     """Ejecuta el pipeline completo bajo el span raiz 'contract-analysis'.
 
@@ -158,6 +216,8 @@ def run_contract_analysis(
         amendment_path: Ruta a la imagen de la adenda/enmienda.
         skip_match_check: Si es True, no verifica que ambos documentos sean el
             mismo contrato. Queda registrado en la metadata del span raiz.
+        refresh_cache: Si es True, vuelve a parsear ambas imagenes aunque ya
+            esten en el registro de transcripciones, y lo sobrescribe.
 
     Returns:
         El objeto Pydantic validado con los cambios detectados entre ambos
@@ -170,8 +230,8 @@ def run_contract_analysis(
     # El progreso va a stderr para que stdout quede con el JSON puro y se pueda redirigir.
     # 1. Parsing multimodal de ambos documentos
     print("[1/4] Parseando imagenes con GPT-4o Vision...", file=sys.stderr)
-    original_text = _step_parse_original(original_path)
-    amendment_text = _step_parse_amendment(amendment_path)
+    original_text = _step_parse_original(original_path, refresh_cache)
+    amendment_text = _step_parse_amendment(amendment_path, refresh_cache)
 
     # 2. Chequeo de correspondencia: despues del parsing porque decide con el
     # texto de GPT-4o, y antes de los agentes porque son ~57 % del costo.
@@ -204,8 +264,8 @@ def parse_args() -> argparse.Namespace:
     """Configura y parsea los argumentos de linea de comandos.
 
     Returns:
-        Los argumentos parseados: `original_image`, `amendment_image` y
-        `skip_match_check`.
+        Los argumentos parseados: `original_image`, `amendment_image`,
+        `skip_match_check` y `refresh_cache`.
     """
     parser = argparse.ArgumentParser(
         prog="clausewatch",
@@ -228,6 +288,14 @@ def parse_args() -> argparse.Namespace:
         help=(
             "No verificar que ambos documentos sean el mismo contrato. Para cuando "
             "el chequeo rechaza un par que el usuario sabe que es valido."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help=(
+            "Volver a parsear las imagenes aunque ya esten en el registro de "
+            "transcripciones (data/parsed_contracts/), y sobrescribirlo."
         ),
     )
     return parser.parse_args()
@@ -291,6 +359,7 @@ def main() -> int:
             args.original_image,
             args.amendment_image,
             skip_match_check=args.skip_match_check,
+            refresh_cache=args.refresh_cache,
             langfuse_trace_id=trace_id,
         )
     except DocumentMismatchError as e:
