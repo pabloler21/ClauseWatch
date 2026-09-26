@@ -137,12 +137,15 @@ CLAUDE.md          consigna.md        pyproject.toml     uv.lock
 requirements.txt   .env (ignorado)    .env.example       .gitignore
 .gitattributes     .python-version    README.md (~20 KB, completo)
 src/config.py      src/models.py      src/image_parser.py    src/main.py
-src/document_match.py
+src/document_match.py  src/parse_cache.py
+tests/test_parse_cache.py
 src/prompts/           __init__.py (load_prompt) + los 4 system prompts en .txt
 src/agents/contextualization_agent.py
 src/agents/extraction_agent.py
 data/test_contracts/   8 imágenes = 3 pares + 2 de correspondencia + README.md
 docs/prompts/          historial versionado de los 4 system prompts + README
+docs/superpowers/      spec y plan del registro de transcripciones
+data/parsed_contracts/ registro local de transcripciones (gitignoreado)
 ```
 
 **Hecho — pipeline completo de los 5 pasos más el chequeo de correspondencia,
@@ -175,6 +178,14 @@ corriendo end-to-end:**
   agentes. `check_document_match()` devuelve un `DocumentMatchVerdict`; no
   decide qué hacer con él. `gpt-4o-mini`, 11/11 en la matriz de prueba, ~USD
   0.0002 y 2-3 s por corrida (medido en Langfuse). Prompt v1.
+- `src/parse_cache.py` — registro de transcripciones (2026-09-26). JSON por
+  entrada en `data/parsed_contracts/`, clave `sha256(sha256(imagen) | modelo |
+  sha256(prompt))`, escritura `.tmp` + `replace()`, `CacheEntryCorruptError`.
+  `main.py` lo consulta en `_parse_with_cache()`, marca `parse_cache`
+  (hit/miss/refresh) en la metadata del span y acepta `--refresh-cache`.
+  Medido en el par 1: 23 s → 14 s, USD 0.0300 → 0.0189; la traza del acierto no
+  tiene generaciones bajo los spans de parsing (✅ API de Langfuse, 2026-09-26).
+  5 tests `unittest` en `tests/`.
 - `src/main.py` — Paso 5. CLI `argparse` con `--skip-match-check`, span raíz
   `contract-analysis` con cinco hijos `@observe`, un `CallbackHandler` por
   etapa. Si el veredicto es negativo lanza `DocumentMismatchError` antes de los
@@ -294,6 +305,12 @@ Constantes con nombre, no variables de entorno. Riesgo residual con la rúbrica
 2.2: no es configurable desde afuera sin editar el archivo; el README lo declara
 como limitación.
 
+**Registro de transcripciones: opción B (2026-09-26).** Caché por hash exacto
+ahora; base vectorial como fase 2 para "¿a qué contrato corresponde esta
+enmienda suelta?", sin implementar. Descartada la vectorial para el caché: habría
+que parsear antes de buscar, y la similitud confunde una enmienda con su
+original. Spec en `docs/superpowers/specs/2026-09-26-parse-cache-design.md`.
+
 **Llamadas directas en vez de `create_agent`.** Ninguno de los dos agentes tiene
 tools; justificado en el README (el Agente 1 es un `invoke()` directo, el Agente
 2 la cadena de `with_structured_output()`).
@@ -332,6 +349,8 @@ enmienda que no cita al original).
 riesgo de la rúbrica 2.2 o si se defiende la decisión tal cual.
 
 **Par 4 con eliminación de cláusula entera.** Ver §4, ground truth.
+
+**Fase 2 del registro: base vectorial.** Ver §5. Sin spec todavía.
 
 **OPCIONAL — Ablation del ContextualizationAgent (flag `--no-context-map`).**
 Diferido por decisión mía el 2026-09-10: es un adorno frente a lo que falta.
