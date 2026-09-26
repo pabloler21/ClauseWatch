@@ -95,6 +95,7 @@ src/
 ├── main.py                              entry point, CLI y orquestación
 ├── image_parser.py                      Paso 1
 ├── document_match.py                    chequeo de correspondencia
+├── parse_cache.py                       registro de transcripciones (caché del Paso 1)
 ├── models.py                            ContractChangeOutput, DocumentMatchVerdict
 ├── config.py                            parámetros de los modelos
 ├── prompts/                             los 4 system prompts, uno por .txt
@@ -104,7 +105,9 @@ src/
     └── extraction_agent.py              Agente 2
 
 data/test_contracts/                     3 pares + 2 casos de correspondencia + ground truth
+data/parsed_contracts/                   registro local de transcripciones (gitignoreado)
 docs/prompts/                            historial versionado de los prompts
+tests/                                   tests del registro (unittest)
 ```
 
 Las dependencias entre módulos van **en una sola dirección**:
@@ -126,10 +129,12 @@ image_parser  document_match  contextualization_  extraction_     models.py
 
 **Los dos agentes no se conocen entre sí.** Solo `main.py` conoce a todos, y por
 eso es el único lugar donde se decide el orden de ejecución y qué hacer con el
-veredicto del chequeo. `config.py` es una hoja sin lógica ni imports: lo
-consumen los cuatro módulos que instancian un modelo, y cada uno carga su prompt
-con `load_prompt()`. Cada módulo tiene su propio bloque `if __name__ == "__main__"` y se puede
-probar aislado.
+veredicto del chequeo. `config.py` es una hoja sin lógica (solo importa
+`pathlib`): lo consumen los cuatro módulos que instancian un modelo, y cada uno
+carga su prompt con `load_prompt()`. `parse_cache.py` depende de `config.py` y de
+`image_parser.py` (la validación y el prompt que entran en la clave), y lo usa
+solo `main.py`. Cada módulo que llama a un modelo tiene su propio bloque
+`if __name__ == "__main__"`; `parse_cache.py` se prueba con `tests/`.
 
 Todo lo que viaja entre etapas es `str`, menos el veredicto del chequeo
 (`DocumentMatchVerdict`) y la salida final. Ningún módulo
@@ -204,6 +209,23 @@ uv run python src/main.py \
 # [DOCUMENTOS NO CORRESPONDEN] Los contratos son distintos y no se pueden comparar.
 # Motivo: ... uno es un Acuerdo de Confidencialidad y el otro es un Contrato de
 # Licencia de Software, con fechas de celebración distintas.
+```
+
+**Registro de transcripciones.** Cada imagen parseada se guarda en
+`data/parsed_contracts/`. Si comparás el mismo original contra varias enmiendas,
+a partir de la segunda corrida el original no vuelve a pasar por GPT-4o:
+
+```bash
+uv run python src/main.py data/test_contracts/documento_1_original.jpg data/test_contracts/documento_1_enmienda.jpg
+# [1/4] Parseando imagenes con GPT-4o Vision...
+#       documento_1_original.jpg: transcripcion tomada del registro.
+```
+
+`--refresh-cache` ignora lo guardado, vuelve a parsear y sobrescribe el
+registro. Los tests del registro no llaman a ningún modelo:
+
+```bash
+uv run python -m unittest discover -s tests -v
 ```
 
 ### Salida
@@ -477,6 +499,35 @@ par 1 (tiene que rechazarse) y una enmienda del par 1 donde una parte **cede** s
 posición (tiene que aceptarse). Resultado: 11/11. Detalle en
 [`docs/prompts/document_match_system_prompt.md`](docs/prompts/document_match_system_prompt.md).
 
+### Registro de transcripciones: caché por hash, no base vectorial
+
+**El problema.** Comparar un contrato contra N enmiendas pagaba N veces el
+parsing del mismo original, que es la llamada más lenta del pipeline (~7-9 s).
+
+**La solución.** `src/parse_cache.py` guarda cada transcripción en un JSON cuyo
+nombre es `sha256(sha256(imagen) | modelo | sha256(prompt))`. Antes de llamar a
+GPT-4o, el span de parsing busca esa clave; si existe, devuelve el texto
+guardado y marca `parse_cache: hit` en su metadata.
+
+| Decisión | Por qué |
+|---|---|
+| Hash exacto, **no** base vectorial | una base vectorial busca por similitud sobre el *texto*: para consultarla habría que parsear primero, que es justo lo que se quiere evitar. Y una enmienda se parece mucho a su original, así que un acierto por similitud podría devolver el documento equivocado sin error visible |
+| Modelo y prompt dentro de la clave | cambiar cualquiera de los dos cambia la transcripción; sin ellos, editar el prompt devolvería texto viejo |
+| Un JSON por entrada | se inspecciona abriendo un archivo, y guarda la procedencia: archivo de origen, modelo, hash del prompt y fecha |
+| Escritura a `.tmp` + `replace()` | si el proceso muere a mitad del guardado no queda una entrada a medio escribir |
+| Fail-open | una entrada corrupta se re-parsea y sobrescribe; un fallo al escribir avisa y el análisis sigue |
+| Solo el parsing | el chequeo de correspondencia y los agentes dependen del **par**, no de un documento |
+
+**Medido sobre el par 1** (misma corrida, antes y después): de 23 s a 14 s, y de
+USD 0.0300 a 0.0189. En la segunda traza los spans de parsing no tienen
+generación hija. El ahorro del costo es aproximado: OpenAI cachea prompts
+repetidos y eso también abarata a los agentes en una corrida seguida.
+
+**Fase 2, no implementada:** una base vectorial sí sirve para otro problema,
+*"llega una enmienda suelta, ¿a cuál contrato registrado corresponde?"*. Los
+registros de `data/parsed_contracts/` serían su materia prima. Diseño en
+[`docs/superpowers/specs/2026-09-26-parse-cache-design.md`](docs/superpowers/specs/2026-09-26-parse-cache-design.md).
+
 ### Errores tipados por capa
 
 `main.py` captura cinco excepciones distintas, de la más específica a la más
@@ -578,6 +629,10 @@ es el contenido — las mismas secciones y los mismos valores.
 del mismo tipo entre las mismas partes con fechas distintas, o una enmienda que
 no cita al original de ninguna forma. Ante un falso rechazo existe
 `--skip-match-check`.
+
+**El registro reconoce archivos, no documentos.** Dos escaneos del mismo papel
+tienen bytes distintos y no comparten entrada: se parsean dos veces. Tampoco
+tiene expiración ni límite de tamaño.
 
 **Los parámetros del modelo se cambian editando `src/config.py`.** Están
 centralizados y documentados, pero no son configurables desde afuera: probar otro
